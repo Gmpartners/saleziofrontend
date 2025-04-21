@@ -1,4 +1,4 @@
-name: Rollback DEV to Latest Stable MAIN
+name: Rollback DEV to Backup Version
 
 on:
   workflow_dispatch:
@@ -13,22 +13,31 @@ jobs:
           ref: dev
           fetch-depth: 0
           
-      - name: Fetch main branch
+      - name: Fetch backup branch
         run: |
-          git fetch origin main
-          echo "Obtendo a última versão estável do main..."
-          MAIN_COMMIT=$(git rev-parse origin/main)
-          echo "Commit estável do main: $MAIN_COMMIT"
+          git fetch origin backup
+          echo "Obtendo a última versão do backup..."
+          
+          # Verificar se a branch backup existe
+          BACKUP_EXISTS=$(git ls-remote --heads origin backup | wc -l)
+          
+          if [ "$BACKUP_EXISTS" -eq "0" ]; then
+            echo "::error::Branch backup não existe! É necessário criar um backup primeiro."
+            exit 1
+          fi
+          
+          BACKUP_COMMIT=$(git rev-parse origin/backup)
+          echo "Commit do backup: $BACKUP_COMMIT"
       
-      - name: Reset dev to main version
+      - name: Reset dev to backup version
         run: |
-          # Reset o branch dev para o mesmo estado do main
-          git reset --hard origin/main
+          # Reset o branch dev para o mesmo estado do backup
+          git reset --hard origin/backup
           
           # Force push para atualizar o branch dev remoto
           git push --force origin dev
           
-          echo "Branch dev foi resetado para a última versão estável do main!"
+          echo "Branch dev foi resetado para a versão de backup!"
       
       - name: Deploy to Dev Server
         env:
@@ -43,4 +52,4 @@ jobs:
           # Reiniciar a aplicação
           sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/wpp-multiatendimento/dev && npm install && export BRANCH=dev && pm2 delete wpp-multiatendimento-dev || true && PORT=3001 BRANCH=dev pm2 start index.js --name wpp-multiatendimento-dev'
           
-          echo "Branch dev restaurado para a versão estável do main e sincronizado com a VPS!"
+          echo "Branch dev restaurado para a versão de backup e sincronizado com a VPS!"
