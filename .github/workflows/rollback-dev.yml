@@ -1,4 +1,4 @@
-name: Rollback DEV to Previous Version
+name: Rollback DEV to Backup Version
 
 on:
   workflow_dispatch:
@@ -6,31 +6,36 @@ on:
 jobs:
   rollback-dev:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Checkout code
+      - name: Checkout backup branch
         uses: actions/checkout@v3
         with:
-          ref: dev
-          fetch-depth: 5
+          ref: backup
+          fetch-depth: 0
           
-      - name: Get previous commit
-        id: get-previous-commit
+      - name: Reset dev to backup version
         run: |
-          # Obter o hash do commit atual
-          CURRENT_COMMIT=$(git rev-parse HEAD)
-          echo "Current commit: $CURRENT_COMMIT"
+          # Configurar Git
+          git config user.name "GitHub Action"
+          git config user.email "actions@github.com"
           
-          # Obter o hash do commit anterior
-          PREVIOUS_COMMIT=$(git rev-parse HEAD~1)
-          echo "Previous commit: $PREVIOUS_COMMIT"
+          # Obter SHA do backup atual
+          BACKUP_SHA=$(git rev-parse HEAD)
+          echo "Current backup SHA: $BACKUP_SHA"
           
-          # Salvar o hash do commit anterior como output
-          echo "previous_commit=$PREVIOUS_COMMIT" >> $GITHUB_OUTPUT
-      
-      - name: Reset to previous commit
-        run: |
-          git reset --hard ${{ steps.get-previous-commit.outputs.previous_commit }}
+          # Fazer checkout do branch dev
+          git fetch origin dev
+          git checkout dev
+          
+          # Resetar dev para a versão do backup
+          git reset --hard $BACKUP_SHA
+          
+          # Push forçado para o branch dev
           git push --force origin dev
+          
+          echo "Branch dev restaurado para a versão estável (branch backup)!"
       
       - name: Deploy to Dev Server
         env:
@@ -45,4 +50,4 @@ jobs:
           # Reiniciar a aplicação
           sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/wpp-multiatendimento/dev && npm install && export BRANCH=dev && pm2 delete wpp-multiatendimento-dev || true && PORT=3001 BRANCH=dev pm2 start index.js --name wpp-multiatendimento-dev'
           
-          echo "Branch dev restaurado para a versão anterior e sincronizado com a VPS!"
+          echo "Branch dev restaurado e sincronizado com a VPS!"

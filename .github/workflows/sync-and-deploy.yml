@@ -15,13 +15,29 @@ jobs:
           ref: main
           fetch-depth: 0
           
-      - name: Fetch all branches
-        run: git fetch --all
-          
-      - name: Configure Git
+      # Novo passo: Salvar a versão atual do main no branch backup
+      - name: Backup current main to backup branch
         run: |
+          # Configurar Git
           git config user.name "GitHub Action"
           git config user.email "actions@github.com"
+          
+          # Verificar se há alterações para backupear
+          MAIN_SHA=$(git rev-parse HEAD)
+          echo "Current main SHA: $MAIN_SHA"
+          
+          # Atualizar o branch backup com a versão atual do main
+          git checkout backup
+          git reset --hard $MAIN_SHA
+          git push --force origin backup
+          
+          # Voltar para o main
+          git checkout main
+          
+          echo "Main branch salvo no branch backup com sucesso!"
+          
+      - name: Fetch all branches
+        run: git fetch --all
           
       - name: Merge dev into main
         run: |
