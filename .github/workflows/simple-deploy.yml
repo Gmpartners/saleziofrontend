@@ -1,0 +1,38 @@
+name: Simple Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Confirmar deploy para produção'
+        required: true
+        default: 'yes'
+  
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code from main
+        uses: actions/checkout@v3
+        with:
+          ref: main
+
+      - name: Install sshpass and rsync
+        run: sudo apt-get install -y sshpass rsync
+          
+      - name: Backup Current Production
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'mkdir -p /root/wpp-multiatendimento/backup/$timestamp && cp -r /root/wpp-multiatendimento/main/* /root/wpp-multiatendimento/backup/$timestamp/ || true'
+          
+      - name: Deploy to Production Server
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          # Usar rsync com a opção --delete para excluir arquivos que não existem mais
+          sshpass -e rsync -avz --delete --exclude="node_modules" -e "ssh -o StrictHostKeyChecking=no" ./ root@157.230.229.74:/root/wpp-multiatendimento/main/
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/wpp-multiatendimento/main && npm install && export BRANCH=main && pm2 delete wpp-multiatendimento-main || true && PORT=3000 BRANCH=main pm2 start index.js --name wpp-multiatendimento-main'
