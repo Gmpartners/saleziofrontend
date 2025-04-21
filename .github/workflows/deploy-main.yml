@@ -1,0 +1,32 @@
+name: Deploy to Production Environment
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install sshpass
+        run: sudo apt-get install -y sshpass
+          
+      - name: Backup Current Production
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'mkdir -p /root/gitaction-test/backup/$timestamp && cp -r /root/gitaction-test/main/* /root/gitaction-test/backup/$timestamp/ || true'
+          
+      - name: Deploy to Production Server
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          sshpass -e scp -o StrictHostKeyChecking=no -r ./* root@157.230.229.74:/root/gitaction-test/main/
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/gitaction-test/main && npm install && export BRANCH=main && pm2 delete gitaction-main || true && pm2 start index.js --name gitaction-main --env production -- --port 3000'
