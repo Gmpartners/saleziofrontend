@@ -1,10 +1,19 @@
 const express = require('express');
 const app = express();
-const port = process.env.PORT || 3000;
-const branch = process.env.BRANCH || 'unknown';
+const port = process.env.PORT || 3001;
+const branch = process.env.BRANCH || 'dev';
 
 app.get('/', (req, res) => {
-  res.send(`Hello from GitHub Actions! This is the ${branch} branch. Server time: ${new Date().toISOString()}`);
+  res.send(`Olá do GitHub Actions! Esta é a branch ${branch}. Versão atualizada! Server time: ${new Date().toISOString()}`);
+});
+
+app.get('/status', (req, res) => {
+  res.json({
+    status: 'online',
+    branch: branch,
+    version: '1.1.0',
+    serverTime: new Date().toISOString()
+  });
 });
 
 app.listen(port, () => {
