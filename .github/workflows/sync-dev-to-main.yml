@@ -4,47 +4,41 @@ on:
   workflow_dispatch:
   
 jobs:
-  sync-and-deploy:
+  sync-branches:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
-      - name: Checkout code
+      - name: Checkout repository for sync
         uses: actions/checkout@v3
-        
-      - name: Create and merge PR
-        uses: actions/github-script@v6
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            try {
-              console.log('Creating pull request from dev to main...');
-              
-              // Create a PR from dev to main
-              const { data: pr } = await github.rest.pulls.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: 'Sync Dev to Main via Workflow',
-                head: 'dev',
-                base: 'main',
-                body: 'Automated PR created by workflow to sync dev to main'
-              });
-              
-              console.log(`Created PR #${pr.number}: ${pr.html_url}`);
-              
-              // Merge the PR immediately
-              await github.rest.pulls.merge({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pr.number,
-                merge_method: 'merge',
-                commit_title: 'Merge dev into main',
-                commit_message: 'Automated merge via workflow'
-              });
-              
-              console.log(`Successfully merged PR #${pr.number}`);
-            } catch (error) {
-              console.error('Error occurred:', error);
-              core.setFailed(error.message);
-            }
+          fetch-depth: 0
+          ref: main
+      
+      - name: Setup Git
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          
+      - name: Print debug info
+        run: |
+          echo "Current branch:"
+          git branch --show-current
+          echo "All branches:"
+          git branch -a
+          echo "Local refs:"
+          git show-ref
+          
+      - name: Fetch dev branch
+        run: |
+          git fetch origin dev
+          
+      - name: Create and merge PR
+        uses: repo-sync/pull-request@v2
+        with:
+          source_branch: "dev"
+          destination_branch: "main"
+          pr_title: "Sync Dev to Main"
+          pr_body: "Automated PR to sync Dev to Main"
+          pr_reviewer: ""
+          pr_assignee: ""
+          pr_label: "automerge"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
