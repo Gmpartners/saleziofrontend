@@ -1,0 +1,56 @@
+name: Sync and Deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v3
+        with:
+          ref: main
+          fetch-depth: 0
+          
+      - name: Fetch all branches
+        run: git fetch --all
+          
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "actions@github.com"
+          
+      - name: Merge dev into main
+        run: |
+          echo "Buscando alterações do branch dev..."
+          git fetch origin dev
+          
+          echo "Tentando mesclar dev em main..."
+          git merge origin/dev -m "Merge dev into main via workflow"
+          
+          echo "Enviando alterações para o repositório remoto..."
+          git push origin main
+      
+      # As etapas de deploy são as mesmas do deploy-main.yml
+      - name: Install sshpass and rsync
+        run: sudo apt-get install -y sshpass rsync
+          
+      - name: Backup Current Production
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'mkdir -p /root/wpp-multiatendimento/backup/$timestamp && cp -r /root/wpp-multiatendimento/main/* /root/wpp-multiatendimento/backup/$timestamp/ || true'
+          
+      - name: Deploy to Production Server
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          # Usar rsync com a opção --delete para excluir arquivos que não existem mais
+          sshpass -e rsync -avz --delete --exclude="node_modules" -e "ssh -o StrictHostKeyChecking=no" ./ root@157.230.229.74:/root/wpp-multiatendimento/main/
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/wpp-multiatendimento/main && npm install && export BRANCH=main && pm2 delete wpp-multiatendimento-main || true && PORT=3000 BRANCH=main pm2 start index.js --name wpp-multiatendimento-main'
