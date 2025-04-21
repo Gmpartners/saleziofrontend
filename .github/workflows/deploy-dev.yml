@@ -21,4 +21,4 @@ jobs:
         run: |
           export SSHPASS=$SSH_PASS
           sshpass -e scp -o StrictHostKeyChecking=no -r ./* root@157.230.229.74:/root/gitaction-test/dev/
-          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/gitaction-test/dev && npm install && export BRANCH=dev && pm2 delete gitaction-dev || true && pm2 start index.js --name gitaction-dev --env production -- --port 3001'
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/gitaction-test/dev && npm install && export BRANCH=dev && pm2 delete gitaction-dev || true && PORT=3001 BRANCH=dev pm2 start index.js --name gitaction-dev'
