@@ -7,7 +7,6 @@ on:
 permissions:
   contents: write    # Permissão para ler/escrever conteúdo
   pull-requests: write # Permissão para criar/gerenciar PRs
-  workflows: write    # Permissão para acionar outros workflows
 
 jobs:
   sync:
@@ -18,7 +17,7 @@ jobs:
         with:
           ref: dev
           fetch-depth: 0  # Importante: buscar todo o histórico para evitar problemas de merge
-          token: ${{ secrets.GETHOB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
@@ -48,7 +47,7 @@ jobs:
           git merge temp-sync-branch
           
           # Configurar remote URL com token para autorização
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/Gmpartners/wpp-multiatendimento.git
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUO_TOKEN }}@github.com/Gmpartners/wpp-multiatendimento.git
           
           # Push das alterações
           git push origin main
