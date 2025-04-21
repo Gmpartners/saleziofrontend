@@ -4,35 +4,47 @@ on:
   workflow_dispatch:
   
 jobs:
-  create-and-merge-pr:
+  sync-and-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
-      - name: Create Pull Request
-        id: create-pr
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Create and merge PR
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const { data: pr } = await github.rest.pulls.create({
-              owner: 'gmpartners',
-              repo: 'wpp-multiatendimento',
-              title: 'Sync Dev to Main via Workflow',
-              head: 'dev',
-              base: 'main',
-              body: 'Automated PR created by workflow to sync dev to main'
-            });
-            
-            console.log(`Created PR #${pr.number}: ${pr.html_url}`);
-            
-            // Merge the PR immediately
-            await github.rest.pulls.merge({
-              owner: 'gmpartners',
-              repo: 'wpp-multiatendimento',
-              pull_number: pr.number,
-              merge_method: 'merge',
-              commit_title: 'Merge dev into main',
-              commit_message: 'Automated merge via workflow'
-            });
-            
-            console.log(`Merged PR #${pr.number}`);
-            return pr.number;
+            try {
+              console.log('Creating pull request from dev to main...');
+              
+              // Create a PR from dev to main
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Sync Dev to Main via Workflow',
+                head: 'dev',
+                base: 'main',
+                body: 'Automated PR created by workflow to sync dev to main'
+              });
+              
+              console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+              
+              // Merge the PR immediately
+              await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                merge_method: 'merge',
+                commit_title: 'Merge dev into main',
+                commit_message: 'Automated merge via workflow'
+              });
+              
+              console.log(`Successfully merged PR #${pr.number}`);
+            } catch (error) {
+              console.error('Error occurred:', error);
+              core.setFailed(error.message);
+            }
