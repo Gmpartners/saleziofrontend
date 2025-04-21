@@ -4,52 +4,50 @@ on:
   workflow_dispatch:
   
 jobs:
-  sync-and-deploy:
+  create-pr:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
+          ref: dev
           fetch-depth: 0
           
-      - name: Sync dev to main via PR
-        run: |
-          # Criar um PR de dev para main e fazer merge automaticamente
-          PR_RESPONSE=$(curl -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/gmpartners/wpp-multiatendimento/pulls \
-            -d '{
-              "title": "Sync Dev to Main via Workflow", 
-              "head": "dev", 
-              "base": "main", 
-              "body": "Automated PR created by workflow"
-            }')
-          
-          echo "PR Response: $PR_RESPONSE"
-          
-          # Extrair número do PR da resposta
-          PR_NUMBER=$(echo $PR_RESPONSE | grep -o '"number": [0-9]*' | grep -o '[0-9]*' | head -1)
-          
-          if [ ! -z "$PR_NUMBER" ]; then
-            echo "Created PR #$PR_NUMBER, now merging..."
-            
-            # Fazer merge do PR
-            MERGE_RESPONSE=$(curl -X PUT -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/gmpartners/wpp-multiatendimento/pulls/$PR_NUMBER/merge \
-              -d '{
-                "commit_title": "Merge dev into main via workflow", 
-                "commit_message": "Automated merge via GitHub Actions", 
-                "merge_method": "merge"
-              }')
-              
-            echo "Merge Response: $MERGE_RESPONSE"
-          else
-            echo "Failed to create PR or extract PR number"
-            exit 1
-          fi
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        id: cpr
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: Sync dev to main via workflow
+          committer: GitHub <noreply@github.com>
+          author: ${{ github.actor }} <${{ github.actor }}@users.noreply.github.com>
+          branch: auto-pr-sync-dev-to-main
+          delete-branch: true
+          title: '[Automated] Sync Dev to Main'
+          body: |
+            Automated Pull Request from GitHub Actions
+            - Syncing dev branch to main for deployment
+          base: main
       
-      - name: Checkout main for deployment
+      - name: Enable Pull Request Automerge
+        if: steps.cpr.outputs.pull-request-operation == 'created'
+        run: |
+          PR_NUMBER="${{ steps.cpr.outputs.pull-request-number }}"
+          echo "Created PR #$PR_NUMBER, now enabling automerge..."
+          
+          curl -X PUT \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/gmpartners/wpp-multiatendimento/pulls/$PR_NUMBER/merge" \
+            -d '{"merge_method":"merge"}'
+            
+          echo "PR has been merged, proceeding to deployment..."
+
+  deploy:
+    needs: create-pr
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main branch
         uses: actions/checkout@v3
         with:
           ref: main
