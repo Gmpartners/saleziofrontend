@@ -1,65 +1,44 @@
 name: Sync Dev to Main
 
 on:
-  # Permite execução manual
   workflow_dispatch:
   
-  # Opcional: executa automaticamente em um horário específico
-  # schedule:
-  #   - cron: '0 0 * * *'  # Executa diariamente à meia-noite UTC
-
 jobs:
   sync-branches:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout repository for sync
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure Git
+          ref: main
+      
+      - name: Setup Git
         run: |
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
-
-      - name: Fetch branches
+          
+      - name: Print debug info
+        run: |
+          echo "Current branch:"
+          git branch --show-current
+          echo "All branches:"
+          git branch -a
+          echo "Local refs:"
+          git show-ref
+          
+      - name: Fetch dev branch
         run: |
           git fetch origin dev
-          git fetch origin main
-
-      - name: Merge dev into main
-        run: |
-          git checkout main
-          git merge --no-ff origin/dev -m "Merge dev into main via GitHub Action"
-          git push origin main
-
-  # Este job será executado após a sincronização e aciona diretamente o deploy
-  trigger-deploy:
-    needs: sync-branches
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code after sync
-        uses: actions/checkout@v3
+          
+      - name: Create and merge PR
+        uses: repo-sync/pull-request@v2
         with:
-          ref: main
-
-      - name: Install sshpass and rsync
-        run: sudo apt-get install -y sshpass rsync
-          
-      - name: Backup Current Production
-        env:
-          SSH_PASS: 9TKSUsh2PAV
-        run: |
-          export SSHPASS=$SSH_PASS
-          timestamp=$(date +%Y%m%d_%H%M%S)
-          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'mkdir -p /root/wpp-multiatendimento/backup/$timestamp && cp -r /root/wpp-multiatendimento/main/* /root/wpp-multiatendimento/backup/$timestamp/ || true'
-          
-      - name: Deploy to Production Server
-        env:
-          SSH_PASS: 9TKSUsh2PAV
-        run: |
-          export SSHPASS=$SSH_PASS
-          # Usar rsync com a opção --delete para excluir arquivos que não existem mais
-          sshpass -e rsync -avz --delete --exclude="node_modules" -e "ssh -o StrictHostKeyChecking=no" ./ root@157.230.229.74:/root/wpp-multiatendimento/main/
-          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/wpp-multiatendimento/main && npm install && export BRANCH=main && pm2 delete wpp-multiatendimento-main || true && PORT=3000 BRANCH=main pm2 start index.js --name wpp-multiatendimento-main'
+          source_branch: "dev"
+          destination_branch: "main"
+          pr_title: "Sync Dev to Main"
+          pr_body: "Automated PR to sync Dev to Main"
+          pr_reviewer: ""
+          pr_assignee: ""
+          pr_label: "automerge"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
