@@ -1,0 +1,61 @@
+name: Rollback MAIN to Previous Version
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rollback-main:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: main
+          fetch-depth: 5
+          
+      - name: Get previous commit
+        id: get-previous-commit
+        run: |
+          # Obter o hash do commit atual
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+          echo "Current commit: $CURRENT_COMMIT"
+          
+          # Obter o hash do commit anterior
+          PREVIOUS_COMMIT=$(git rev-parse HEAD~1)
+          echo "Previous commit: $PREVIOUS_COMMIT"
+          
+          # Salvar o hash do commit anterior como output
+          echo "previous_commit=$PREVIOUS_COMMIT" >> $GITHUB_OUTPUT
+      
+      - name: Reset to previous commit
+        run: |
+          git reset --hard ${{ steps.get-previous-commit.outputs.previous_commit }}
+          git push --force origin main
+      
+      - name: Backup Current Production Before Rollback
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          sudo apt-get install -y sshpass rsync
+          export SSHPASS=$SSH_PASS
+          
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          BACKUP_FOLDER="pre_rollback_$TIMESTAMP"
+          
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 "mkdir -p /root/wpp-multiatendimento/backup/$BACKUP_FOLDER && cp -r /root/wpp-multiatendimento/main/* /root/wpp-multiatendimento/backup/$BACKUP_FOLDER/ || true"
+          
+          echo "Backup de segurança criado: $BACKUP_FOLDER"
+      
+      - name: Deploy to Production Server
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          
+          # Usar rsync com a opção --delete para excluir arquivos que não existem mais
+          sshpass -e rsync -avz --delete --exclude="node_modules" -e "ssh -o StrictHostKeyChecking=no" ./ root@157.230.229.74:/root/wpp-multiatendimento/main/
+          
+          # Reiniciar a aplicação
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/wpp-multiatendimento/main && npm install && export BRANCH=main && pm2 delete wpp-multiatendimento-main || true && PORT=3000 BRANCH=main pm2 start index.js --name wpp-multiatendimento-main'
+          
+          echo "Branch main restaurado para a versão anterior e sincronizado com a VPS!"
