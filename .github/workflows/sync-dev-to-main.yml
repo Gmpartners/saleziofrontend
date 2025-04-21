@@ -1,0 +1,52 @@
+name: Sync Dev to Main
+
+on:
+  workflow_dispatch:  # Permite acionar manualmente através da interface do GitHub
+  # Você também pode descomentar abaixo se quiser que seja acionado automaticamente após testes
+  # schedule:
+  #   - cron: '0 0 * * *'  # Executar diariamente à meia-noite UTC
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: dev
+          fetch-depth: 0  # Importante: buscar todo o histórico para evitar problemas de merge
+
+      - name: Configure Git
+        run: |
+          git config --global user.name 'GitHub Actions'
+          git config --global user.email 'github-actions@github.com'
+          
+      - name: Sync Dev to Main
+        run: |
+          # Garantir que temos a branch main atualizada
+          git fetch origin main
+          
+          # Criar uma branch temporária a partir da main atual
+          git checkout -b temp-sync-branch origin/main
+          
+          # Aplicar as alterações da dev (incluindo exclusões)
+          # O parâmetro -X theirs diz ao Git para preferir as alterações da dev em caso de conflito
+          git merge origin/dev -X theirs --allow-unrelated-histories
+          
+          # Fazer push das alterações para a main
+          git checkout main
+          git merge temp-sync-branch
+          git push origin main
+          
+          # Limpar as branches temporárias
+          git branch -D temp-sync-branch
+          
+      - name: Trigger Production Deployment
+        # Este passo opcional aciona o workflow de deploy para produção automaticamente
+        # Se você preferir fazer isso manualmente, pode remover ou comentar este passo
+        run: |
+          # Esperar 5 segundos para garantir que o GitHub processou o push anterior
+          sleep 5
+          
+          # O workflow de deploy da main será acionado automaticamente pelo push
+          echo "Aguardando o deploy para produção ser iniciado..."
