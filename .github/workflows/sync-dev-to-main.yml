@@ -1,66 +1,65 @@
 name: Sync Dev to Main
 
 on:
-  workflow_dispatch:  # Permite acionar manualmente através da interface do GitHub
-
-# Define permissões específicas para o GITHUB_TOKEN
-permissions:
-  contents: write     # Permissão para ler/escrever conteúdo
-  pull-requests: write # Permissão para criar/gerenciar PRs
+  # Permite execução manual
+  workflow_dispatch:
+  
+  # Opcional: executa automaticamente em um horário específico
+  # schedule:
+  #   - cron: '0 0 * * *'  # Executa diariamente à meia-noite UTC
 
 jobs:
-  sync:
+  sync-branches:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          ref: dev
-          fetch-depth: 0  # Importante: buscar todo o histórico para evitar problemas de merge
+          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
-          git config --global user.name 'GitHub Actions'
-          git config --global user.email 'github-actions@github.com'
-          
-      - name: Sync Dev to Main
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+
+      - name: Fetch branches
         run: |
-          # Garantir que temos a branch main atualizada
+          git fetch origin dev
           git fetch origin main
-          
-          # Criar uma branch temporária a partir da main atual
-          git checkout -b temp-sync-branch origin/main
-          
-          # Aplicar as alterações da dev (incluindo exclusões)
-          # O parâmetro -X theirs diz ao Git para preferir as alterações da dev em caso de conflito
-          git merge origin/dev -X theirs --allow-unrelated-histories
-          
-          # Verificar se há mudanças para enviar
-          if git diff --quiet HEAD origin/main; then
-            echo "Não há alterações para sincronizar"
-            exit 0
-          fi
-          
-          # Fazer push das alterações para a main usando HTTPS com token
-          git checkout main
-          git merge temp-sync-branch
-          
-          # Configurar remote URL com token para autorização
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/Gmpartners/wpp-multiatendimento.git
-          
-          # Push das alterações
-          git push origin main
-          
-          # Limpar as branches temporárias
-          git branch -D temp-sync-branch
-          
-      - name: Trigger Production Deployment
-        # Este passo opcional aciona o workflow de deploy para produção automaticamente
-        # Se você preferir fazer isso manualmente, pode remover ou comentar este passo
+
+      - name: Merge dev into main
         run: |
-          # Esperar 5 segundos para garantir que o GitHub processou o push anterior
-          sleep 5
+          git checkout main
+          git merge --no-ff origin/dev -m "Merge dev into main via GitHub Action"
+          git push origin main
+
+  # Este job será executado após a sincronização e aciona diretamente o deploy
+  trigger-deploy:
+    needs: sync-branches
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code after sync
+        uses: actions/checkout@v3
+        with:
+          ref: main
+
+      - name: Install sshpass and rsync
+        run: sudo apt-get install -y sshpass rsync
           
-          # O workflow de deploy da main será acionado automaticamente pelo push
-          echo "Aguardando o deploy para produção ser iniciado..."
+      - name: Backup Current Production
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'mkdir -p /root/wpp-multiatendimento/backup/$timestamp && cp -r /root/wpp-multiatendimento/main/* /root/wpp-multiatendimento/backup/$timestamp/ || true'
+          
+      - name: Deploy to Production Server
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          # Usar rsync com a opção --delete para excluir arquivos que não existem mais
+          sshpass -e rsync -avz --delete --exclude="node_modules" -e "ssh -o StrictHostKeyChecking=no" ./ root@157.230.229.74:/root/wpp-multiatendimento/main/
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/wpp-multiatendimento/main && npm install && export BRANCH=main && pm2 delete wpp-multiatendimento-main || true && PORT=3000 BRANCH=main pm2 start index.js --name wpp-multiatendimento-main'
