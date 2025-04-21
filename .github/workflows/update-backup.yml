@@ -1,0 +1,38 @@
+name: Update Backup Branch
+
+on:
+  # Executa automaticamente após cada deploy em produção (quando main é atualizado)
+  push:
+    branches:
+      - main
+  # Também permite execução manual
+  workflow_dispatch:
+
+jobs:
+  update-backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: main
+          fetch-depth: 0
+          
+      - name: Create or update backup branch
+        run: |
+          # Verificar se a branch backup existe remotamente
+          BACKUP_EXISTS=$(git ls-remote --heads origin backup | wc -l)
+          
+          if [ "$BACKUP_EXISTS" -eq "0" ]; then
+            echo "Branch backup não existe, criando..."
+            # Criar branch backup a partir do main atual
+            git checkout -b backup
+            git push origin backup
+          else
+            echo "Branch backup já existe, atualizando..."
+            # Atualizar branch backup com o estado atual do main
+            git checkout main
+            git push origin main:backup --force
+          fi
+          
+          echo "Branch backup atualizada com o estado atual do main!"

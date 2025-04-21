@@ -1,4 +1,4 @@
-name: Rollback DEV to Backup Version
+name: Rollback DEV to Latest Stable MAIN
 
 on:
   workflow_dispatch:
@@ -6,36 +6,29 @@ on:
 jobs:
   rollback-dev:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Checkout backup branch
+      - name: Checkout code
         uses: actions/checkout@v3
         with:
-          ref: backup
+          ref: dev
           fetch-depth: 0
           
-      - name: Reset dev to backup version
+      - name: Fetch main branch
         run: |
-          # Configurar Git
-          git config user.name "GitHub Action"
-          git config user.email "actions@github.com"
+          git fetch origin main
+          echo "Obtendo a última versão estável do main..."
+          MAIN_COMMIT=$(git rev-parse origin/main)
+          echo "Commit estável do main: $MAIN_COMMIT"
+      
+      - name: Reset dev to main version
+        run: |
+          # Reset o branch dev para o mesmo estado do main
+          git reset --hard origin/main
           
-          # Obter SHA do backup atual
-          BACKUP_SHA=$(git rev-parse HEAD)
-          echo "Current backup SHA: $BACKUP_SHA"
-          
-          # Fazer checkout do branch dev
-          git fetch origin dev
-          git checkout dev
-          
-          # Resetar dev para a versão do backup
-          git reset --hard $BACKUP_SHA
-          
-          # Push forçado para o branch dev
+          # Force push para atualizar o branch dev remoto
           git push --force origin dev
           
-          echo "Branch dev restaurado para a versão estável (branch backup)!"
+          echo "Branch dev foi resetado para a última versão estável do main!"
       
       - name: Deploy to Dev Server
         env:
@@ -50,4 +43,4 @@ jobs:
           # Reiniciar a aplicação
           sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/wpp-multiatendimento/dev && npm install && export BRANCH=dev && pm2 delete wpp-multiatendimento-dev || true && PORT=3001 BRANCH=dev pm2 start index.js --name wpp-multiatendimento-dev'
           
-          echo "Branch dev restaurado e sincronizado com a VPS!"
+          echo "Branch dev restaurado para a versão estável do main e sincronizado com a VPS!"
