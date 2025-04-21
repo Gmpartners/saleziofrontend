@@ -1,0 +1,47 @@
+name: Sync Direct
+
+on:
+  workflow_dispatch:
+  
+jobs:
+  sync-via-api:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Criar PR via API GitHub
+        id: criar_pr
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            try {
+              // Criar PR
+              console.log('Tentando criar PR de dev para main...');
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Sync Dev para Main [Direct]',
+                head: 'dev',
+                base: 'main',
+                body: 'Pull Request automático para sincronizar dev com main'
+              });
+              
+              console.log(`PR #${pr.number} criado: ${pr.html_url}`);
+              
+              // Fazer merge do PR
+              const merge = await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                merge_method: 'merge'
+              });
+              
+              console.log(`PR #${pr.number} mesclado: ${merge.data.sha}`);
+              return pr.number;
+            } catch (error) {
+              console.log(`Erro: ${error.message}`);
+              core.setFailed(error.message);
+              return null;
+            }
