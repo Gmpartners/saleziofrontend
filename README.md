@@ -1,8 +1,12 @@
-# GitAction Test
+# WPP Multiatendimento
 
-Um projeto simples para testar o GitHub Actions com deploy automático em uma VPS usando PM2.
+Sistema de atendimento múltiplo para WhatsApp.
 
 ## Estrutura
-- Branch `main`: Produção
-- Branch `dev`: Desenvolvimento
-- Backup automático: A versão anterior do `main` é armazenada em uma pasta de backup antes de cada novo deploy
+- Branch `main`: Produção (porta 3000)
+- Branch `dev`: Desenvolvimento (porta 3001)
+
+## Configuração
+O projeto está configurado com GitHub Actions para deploy automático:
+- Push para `dev` → Deploy automático no ambiente de desenvolvimento
+- Push para `main` → Deploy automático no ambiente de produção

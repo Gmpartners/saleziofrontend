@@ -1,21 +1,27 @@
 const express = require('express');
 const app = express();
-const port = process.env.PORT || 3001;
+const port = process.env.PORT || 3000;
 const branch = process.env.BRANCH || 'dev';
 
+// Middleware para JSON
+app.use(express.json());
+
+// Rota principal
 app.get('/', (req, res) => {
-  res.send(`Olá do GitHub Actions! Esta é a branch ${branch}. Versão atualizada! Server time: ${new Date().toISOString()}`);
+  res.send(`WPP Multiatendimento - Branch: ${branch} - ${new Date().toISOString()}`);
 });
 
+// Rota de status
 app.get('/status', (req, res) => {
   res.json({
     status: 'online',
     branch: branch,
-    version: '1.1.0',
+    version: '1.0.0',
     serverTime: new Date().toISOString()
   });
 });
 
+// Iniciar servidor
 app.listen(port, () => {
-  console.log(`Servidor rodando na porta ${port} - Branch: ${branch}`);
+  console.log(`Servidor WPP Multiatendimento rodando na porta ${port} - Branch: ${branch}`);
 });
