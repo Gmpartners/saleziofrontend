@@ -6,36 +6,28 @@ on:
 jobs:
   rollback-main:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Checkout backup branch
+      - name: Checkout code
         uses: actions/checkout@v3
         with:
-          ref: backup
+          ref: main
           fetch-depth: 0
           
-      - name: Reset main to backup version
+      - name: Fetch backup branch
         run: |
-          # Configurar Git
-          git config user.name "GitHub Action"
-          git config user.email "actions@github.com"
+          git fetch origin backup
+          echo "Verificando a versão de backup..."
           
-          # Obter SHA do backup atual
-          BACKUP_SHA=$(git rev-parse HEAD)
-          echo "Current backup SHA: $BACKUP_SHA"
+          # Verificar se a branch backup existe
+          BACKUP_EXISTS=$(git ls-remote --heads origin backup | wc -l)
           
-          # Fazer checkout do branch main
-          git fetch origin main
-          git checkout main
+          if [ "$BACKUP_EXISTS" -eq "0" ]; then
+            echo "::error::Branch backup não existe! É necessário criar um backup primeiro."
+            exit 1
+          fi
           
-          # Resetar main para a versão do backup
-          git reset --hard $BACKUP_SHA
-          
-          # Push forçado para o branch main
-          git push --force origin main
-          
-          echo "Branch main restaurado para a versão estável (branch backup)!"
+          BACKUP_COMMIT=$(git rev-parse origin/backup)
+          echo "Commit do backup: $BACKUP_COMMIT"
       
       - name: Backup Current Production Before Rollback
         env:
@@ -51,6 +43,16 @@ jobs:
           
           echo "Backup de segurança criado: $BACKUP_FOLDER"
       
+      - name: Reset main to backup version
+        run: |
+          # Reset o branch main para o mesmo estado do backup
+          git reset --hard origin/backup
+          
+          # Force push para atualizar o branch main remoto
+          git push --force origin main
+          
+          echo "Branch main foi restaurado para a versão de backup!"
+      
       - name: Deploy to Production Server
         env:
           SSH_PASS: 9TKSUsh2PAV
@@ -63,4 +65,4 @@ jobs:
           # Reiniciar a aplicação
           sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/wpp-multiatendimento/main && npm install && export BRANCH=main && pm2 delete wpp-multiatendimento-main || true && PORT=3000 BRANCH=main pm2 start index.js --name wpp-multiatendimento-main'
           
-          echo "Branch main restaurado e sincronizado com a VPS!"
+          echo "Branch main restaurado para a versão de backup e sincronizado com a VPS!"
