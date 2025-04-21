@@ -2,9 +2,6 @@ name: Sync Dev to Main
 
 on:
   workflow_dispatch:  # Permite acionar manualmente através da interface do GitHub
-  # Você também pode descomentar abaixo se quiser que seja acionado automaticamente após testes
-  # schedule:
-  #   - cron: '0 0 * * *'  # Executar diariamente à meia-noite UTC
 
 jobs:
   sync:
@@ -15,6 +12,7 @@ jobs:
         with:
           ref: dev
           fetch-depth: 0  # Importante: buscar todo o histórico para evitar problemas de merge
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
@@ -33,9 +31,20 @@ jobs:
           # O parâmetro -X theirs diz ao Git para preferir as alterações da dev em caso de conflito
           git merge origin/dev -X theirs --allow-unrelated-histories
           
-          # Fazer push das alterações para a main
+          # Verificar se há mudanças para enviar
+          if git diff --quiet HEAD origin/main; then
+            echo "Não há alterações para sincronizar"
+            exit 0
+          fi
+          
+          # Fazer push das alterações para a main usando HTTPS com token
           git checkout main
           git merge temp-sync-branch
+          
+          # Configurar remote URL com token para autorização
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/Gmpartners/wpp-multiatendimento.git
+          
+          # Push das alterações
           git push origin main
           
           # Limpar as branches temporárias
