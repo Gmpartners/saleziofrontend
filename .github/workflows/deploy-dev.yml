@@ -12,13 +12,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Install sshpass
-        run: sudo apt-get install -y sshpass
+      - name: Install sshpass and rsync
+        run: sudo apt-get install -y sshpass rsync
           
       - name: Deploy to Dev Server
         env:
           SSH_PASS: 9TKSUsh2PAV
         run: |
           export SSHPASS=$SSH_PASS
-          sshpass -e scp -o StrictHostKeyChecking=no -r ./* root@157.230.229.74:/root/gitaction-test/dev/
+          # Usar rsync com a opção --delete para excluir arquivos que não existem mais
+          sshpass -e rsync -avz --delete --exclude="node_modules" -e "ssh -o StrictHostKeyChecking=no" ./ root@157.230.229.74:/root/gitaction-test/dev/
           sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/gitaction-test/dev && npm install && export BRANCH=dev && pm2 delete gitaction-dev || true && PORT=3001 BRANCH=dev pm2 start index.js --name gitaction-dev'
