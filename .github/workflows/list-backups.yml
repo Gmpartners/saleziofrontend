@@ -1,0 +1,29 @@
+name: List Available Backups
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Número de backups a listar'
+        required: false
+        default: '10'
+        type: string
+
+jobs:
+  list-backups:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List Available Backups
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          
+          echo "### Backups disponíveis ###"
+          echo "Listando os ${{ inputs.limit }} backups mais recentes:"
+          
+          # Listar backups ordenados por data (mais recente primeiro)
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 "ls -lt /root/wpp-multiatendimento/backup | grep -v 'total' | head -${{ inputs.limit }}"
+          
+          echo ""
+          echo "Para fazer rollback, use o workflow 'Rollback to Previous Version' e informe o nome da pasta de backup."

@@ -1,0 +1,78 @@
+name: Rollback to Previous Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_folder:
+        description: 'Nome da pasta de backup (formato YYYYMMDD_HHMMSS)'
+        required: true
+        type: string
+      confirm:
+        description: 'Confirmar rollback? (yes/no)'
+        required: true
+        default: 'no'
+        type: choice
+        options:
+          - 'yes'
+          - 'no'
+
+jobs:
+  list-backups:
+    runs-on: ubuntu-latest
+    if: inputs.backup_folder == ''
+    steps:
+      - name: List Available Backups
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          echo "### Backups disponíveis para restauração ###"
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 "ls -lt /root/wpp-multiatendimento/backup | grep -v total | head -10"
+          echo "Para fazer rollback, execute novamente este workflow informando o nome da pasta de backup."
+
+  rollback:
+    runs-on: ubuntu-latest
+    if: inputs.backup_folder != '' && inputs.confirm == 'yes'
+    steps:
+      - name: Validate Backup Folder
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          BACKUP_EXISTS=$(sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 "[ -d /root/wpp-multiatendimento/backup/${{ inputs.backup_folder }} ] && echo 'yes' || echo 'no'")
+          if [ "$BACKUP_EXISTS" != "yes" ]; then
+            echo "::error::Pasta de backup não encontrada: ${{ inputs.backup_folder }}"
+            exit 1
+          fi
+          echo "Backup encontrado: ${{ inputs.backup_folder }}"
+      
+      - name: Backup Current State Before Rollback
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          BACKUP_FOLDER="pre_rollback_$TIMESTAMP"
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 "mkdir -p /root/wpp-multiatendimento/backup/$BACKUP_FOLDER && cp -r /root/wpp-multiatendimento/main/* /root/wpp-multiatendimento/backup/$BACKUP_FOLDER/ || true"
+          echo "Estado atual salvo como: $BACKUP_FOLDER"
+      
+      - name: Perform Rollback
+        env:
+          SSH_PASS: 9TKSUsh2PAV
+        run: |
+          export SSHPASS=$SSH_PASS
+          echo "Iniciando rollback para versão: ${{ inputs.backup_folder }}"
+          
+          # Parar a aplicação
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 "pm2 delete wpp-multiatendimento-main || true"
+          
+          # Limpar diretório atual
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 "rm -rf /root/wpp-multiatendimento/main/*"
+          
+          # Copiar backup
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 "cp -r /root/wpp-multiatendimento/backup/${{ inputs.backup_folder }}/* /root/wpp-multiatendimento/main/"
+          
+          # Reiniciar aplicação
+          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 "cd /root/wpp-multiatendimento/main && npm install && export BRANCH=main && PORT=3000 BRANCH=main pm2 start index.js --name wpp-multiatendimento-main"
+          
+          echo "Rollback concluído com sucesso!"
