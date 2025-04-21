@@ -4,71 +4,35 @@ on:
   workflow_dispatch:
   
 jobs:
-  create-pr:
+  create-and-merge-pr:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-        with:
-          ref: dev
-          fetch-depth: 0
-          
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v5
-        id: cpr
+        id: create-pr
+        uses: actions/github-script@v6
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: Sync dev to main via workflow
-          committer: GitHub <noreply@github.com>
-          author: ${{ github.actor }} <${{ github.actor }}@users.noreply.github.com>
-          branch: auto-pr-sync-dev-to-main
-          delete-branch: true
-          title: '[Automated] Sync Dev to Main'
-          body: |
-            Automated Pull Request from GitHub Actions
-            - Syncing dev branch to main for deployment
-          base: main
-      
-      - name: Enable Pull Request Automerge
-        if: steps.cpr.outputs.pull-request-operation == 'created'
-        run: |
-          PR_NUMBER="${{ steps.cpr.outputs.pull-request-number }}"
-          echo "Created PR #$PR_NUMBER, now enabling automerge..."
-          
-          curl -X PUT \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/gmpartners/wpp-multiatendimento/pulls/$PR_NUMBER/merge" \
-            -d '{"merge_method":"merge"}'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { data: pr } = await github.rest.pulls.create({
+              owner: 'gmpartners',
+              repo: 'wpp-multiatendimento',
+              title: 'Sync Dev to Main via Workflow',
+              head: 'dev',
+              base: 'main',
+              body: 'Automated PR created by workflow to sync dev to main'
+            });
             
-          echo "PR has been merged, proceeding to deployment..."
-
-  deploy:
-    needs: create-pr
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout main branch
-        uses: actions/checkout@v3
-        with:
-          ref: main
-          fetch-depth: 1
-          
-      - name: Install sshpass and rsync
-        run: sudo apt-get install -y sshpass rsync
-          
-      - name: Backup Current Production
-        env:
-          SSH_PASS: 9TKSUsh2PAV
-        run: |
-          export SSHPASS=$SSH_PASS
-          timestamp=$(date +%Y%m%d_%H%M%S)
-          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'mkdir -p /root/wpp-multiatendimento/backup/$timestamp && cp -r /root/wpp-multiatendimento/main/* /root/wpp-multiatendimento/backup/$timestamp/ || true'
-          
-      - name: Deploy to Production Server
-        env:
-          SSH_PASS: 9TKSUsh2PAV
-        run: |
-          export SSHPASS=$SSH_PASS
-          # Usar rsync com a opção --delete para excluir arquivos que não existem mais
-          sshpass -e rsync -avz --delete --exclude="node_modules" -e "ssh -o StrictHostKeyChecking=no" ./ root@157.230.229.74:/root/wpp-multiatendimento/main/
-          sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/wpp-multiatendimento/main && npm install && export BRANCH=main && pm2 delete wpp-multiatendimento-main || true && PORT=3000 BRANCH=main pm2 start index.js --name wpp-multiatendimento-main'
+            console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+            
+            // Merge the PR immediately
+            await github.rest.pulls.merge({
+              owner: 'gmpartners',
+              repo: 'wpp-multiatendimento',
+              pull_number: pr.number,
+              merge_method: 'merge',
+              commit_title: 'Merge dev into main',
+              commit_message: 'Automated merge via workflow'
+            });
+            
+            console.log(`Merged PR #${pr.number}`);
+            return pr.number;
