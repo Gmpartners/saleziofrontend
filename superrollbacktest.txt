@@ -1,0 +1,2 @@
+Este é um arquivo de teste para o sistema de rollback.
+Criado para testar o fluxo de deploy e rollback entre as branches.
