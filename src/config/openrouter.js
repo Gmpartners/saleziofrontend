@@ -10,12 +10,17 @@ const openRouterClient = axios.create({
 
 const generateResponse = async (prompt, conversationHistory = []) => {
   try {
+    // Se for a primeira mensagem, enviar saudação simples
+    if (conversationHistory.length === 1 && conversationHistory[0].role === 'user') {
+      return "Olá! Como posso ajudar?";
+    }
+    
     const response = await openRouterClient.post('/chat/completions', {
       model: process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat',
       messages: [
         {
           role: 'system',
-          content: 'Você é um assistente de atendimento ao cliente para um sistema de multiatendimento via WhatsApp. Sua função é identificar a intenção do cliente, coletar informações básicas como nome e determinar qual setor pode melhor atendê-lo. Seja sempre cordial e profissional.'
+          content: 'Você é um assistente de atendimento ao cliente para um sistema de multiatendimento via WhatsApp. Sua função é fazer a triagem inicial e determinar qual setor pode melhor atender o cliente. Seja direto e objetivo.'
         },
         ...conversationHistory,
         {
@@ -75,4 +80,42 @@ const identifySetor = async (message, setores) => {
   }
 };
 
-module.exports = { generateResponse, identifySetor };
+const suggestSectorTransfer = async (message, setorIdentificado) => {
+  try {
+    const prompt = `
+    Com base na mensagem do cliente: "${message}"
+    
+    E sabendo que o setor mais adequado seria: "${setorIdentificado}"
+    
+    Gere uma mensagem curta sugerindo a transferência para este setor específico.
+    A mensagem deve ter este formato: "Creio que sua solicitação tem mais a ver com o [nome do setor], posso transferir?"
+    `;
+    
+    const response = await openRouterClient.post('/chat/completions', {
+      model: process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat',
+      messages: [
+        {
+          role: 'system',
+          content: 'Você é um assistente que faz triagem de atendimentos. Seja direto e objetivo.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 100
+    });
+
+    return response.data.choices[0].message.content.trim();
+  } catch (error) {
+    console.error('Erro ao gerar sugestão de transferência:', error.message);
+    return `Creio que sua solicitação tem mais a ver com o ${setorIdentificado}, posso transferir?`;
+  }
+};
+
+module.exports = { 
+  generateResponse, 
+  identifySetor,
+  suggestSectorTransfer
+};

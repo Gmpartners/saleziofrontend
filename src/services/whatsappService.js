@@ -21,16 +21,23 @@ const apiClient = axios.create({
  * @param {string} number - Número do destinatário no formato internacional (ex: 5521964738621)
  * @param {string} text - Texto da mensagem
  * @param {string} userId - ID do usuário/atendente que está enviando a mensagem
+ * @param {string} atendenteNome - Nome do atendente (opcional)
  * @returns {Promise} - Resultado da requisição
  */
-const sendTextMessage = async (number, text, userId = 'system') => {
+const sendTextMessage = async (number, text, userId = 'system', atendenteNome = null) => {
   try {
     // Limpar o número se tiver o formato WhatsApp (com @s.whatsapp.net)
     const cleanNumber = number.includes('@') ? number.split('@')[0] : number;
     
+    // Formatar mensagem com nome do atendente, se fornecido
+    let mensagemFormatada = text;
+    if (atendenteNome && userId !== 'system') {
+      mensagemFormatada = `*${atendenteNome}*\n\n${text}`;
+    }
+    
     const response = await apiClient.post('/message/sendText/zapnumber', {
       number: cleanNumber,
-      text
+      text: mensagemFormatada
     });
     
     console.log(`[WhatsApp] Mensagem enviada para ${cleanNumber} por ${userId}: ${text}`);

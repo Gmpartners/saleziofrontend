@@ -3,7 +3,7 @@
  */
 const Conversa = require('../models/Conversa');
 const whatsappService = require('../services/whatsappService');
-const { identifySetor, generateResponse } = require('../config/openrouter');
+const { identifySetor, generateResponse, suggestSectorTransfer } = require('../config/openrouter');
 const Setor = require('../models/Setor');
 
 /**
@@ -93,13 +93,15 @@ const processWhatsappWebhook = async (req, res) => {
           texto: mensagem,
           tipo: 'cliente'
         }],
-        tags: ['whatsapp', userId]
+        tags: ['whatsapp', userId],
+        metadata: {
+          esperandoConfirmacao: false,
+          setorSugerido: null
+        }
       });
       
-      // Gerar resposta inicial automatizada com IA
-      const resposta = await generateResponse(mensagem, [
-        { role: 'user', content: `Meu nome é ${nome} e minha mensagem é: ${mensagem}` }
-      ]);
+      // Gerar saudação inicial simples
+      const resposta = "Olá! Como posso ajudar?";
       
       // Adicionar resposta da IA à conversa
       conversa.mensagens.push({
@@ -116,7 +118,7 @@ const processWhatsappWebhook = async (req, res) => {
         resposta
       );
       
-      // Notificar via WebSocket (implementado no serviço de socket)
+      // Notificar via WebSocket
       if (global.io) {
         global.io.emit('nova_conversa', {
           id: conversa._id,
@@ -138,36 +140,139 @@ const processWhatsappWebhook = async (req, res) => {
       // Atualizar data
       conversa.atualizadoEm = new Date();
       
-      // Se a conversa estava resolvida, reabri-la
-      if (conversa.status === 'resolvido') {
-        conversa.status = 'aguardando';
+      // Verificar se estamos esperando confirmação para transferência
+      if (conversa.metadata && conversa.metadata.esperandoConfirmacao && conversa.metadata.setorSugerido) {
+        // Verificar resposta positiva (sim, ok, pode, claro, etc.)
+        const respostaPositiva = /sim|ok|pode|claro|confirmo|s|positivo|transfira|transferir|prossiga|concordo/i.test(mensagem);
+        
+        if (respostaPositiva) {
+          // Transferir conversa para o setor sugerido
+          const setorAnterior = conversa.setor;
+          conversa.setor = conversa.metadata.setorSugerido;
+          
+          // Adicionar mensagem de confirmação da transferência
+          const confirmaTransferencia = `Estaremos transferindo para o ${conversa.metadata.setorSugerido}!`;
+          
+          conversa.mensagens.push({
+            texto: confirmaTransferencia,
+            tipo: 'ia'
+          });
+          
+          // Resetar flags de espera
+          conversa.metadata.esperandoConfirmacao = false;
+          conversa.metadata.setorSugerido = null;
+          
+          // Salvar conversa
+          await conversa.save();
+          
+          // Enviar confirmação para o cliente
+          await whatsappService.sendTextMessage(
+            telefone,
+            confirmaTransferencia
+          );
+          
+          // Notificar via WebSocket sobre a transferência
+          if (global.io) {
+            global.io.emit('conversa_transferida', {
+              conversaId: conversa._id,
+              setorAntigo: setorAnterior,
+              setorNovo: conversa.setor,
+              cliente: conversa.cliente
+            });
+          }
+          
+          console.log(`[Webhook] Conversa transferida para: ${conversa.setor}`);
+        } else {
+          // Continuar conversa normal, resetar flags
+          conversa.metadata.esperandoConfirmacao = false;
+          conversa.metadata.setorSugerido = null;
+          
+          // Gerar resposta da IA para continuar diálogo
+          const resposta = await generateResponse(mensagem, [
+            { role: 'user', content: `Continuação da conversa. Nova mensagem: ${mensagem}` }
+          ]);
+          
+          // Adicionar resposta da IA à conversa
+          conversa.mensagens.push({
+            texto: resposta,
+            tipo: 'ia'
+          });
+          
+          // Salvar conversa
+          await conversa.save();
+          
+          // Enviar resposta ao cliente
+          await whatsappService.sendTextMessage(
+            telefone,
+            resposta
+          );
+        }
+      } else {
+        // Se a conversa estava resolvida, reabri-la
+        if (conversa.status === 'resolvido') {
+          conversa.status = 'aguardando';
+        }
+        
+        // Se conversa está em atendimento, não gerar resposta automática
+        if (conversa.status === 'em_andamento') {
+          await conversa.save();
+        } else {
+          // Verificar se é possível sugerir transferência para outro setor
+          // Obter todos os setores ativos
+          const setores = await Setor.find({ ativo: true });
+          const setorIdentificado = await identifySetor(mensagem, setores);
+          
+          // Se o setor identificado é diferente do atual e não é "não identificado"
+          if (setorIdentificado !== 'não identificado' && setorIdentificado !== conversa.setor) {
+            // Gerar sugestão de transferência
+            const sugestaoTransferencia = await suggestSectorTransfer(mensagem, setorIdentificado);
+            
+            // Adicionar resposta da IA à conversa
+            conversa.mensagens.push({
+              texto: sugestaoTransferencia,
+              tipo: 'ia'
+            });
+            
+            // Marcar como esperando confirmação
+            conversa.metadata = {
+              ...(conversa.metadata || {}),
+              esperandoConfirmacao: true,
+              setorSugerido: setorIdentificado
+            };
+            
+            // Salvar conversa
+            await conversa.save();
+            
+            // Enviar sugestão de transferência
+            await whatsappService.sendTextMessage(
+              telefone,
+              sugestaoTransferencia
+            );
+          } else {
+            // Continuar no mesmo setor, gerar resposta normal
+            const resposta = await generateResponse(mensagem, [
+              { role: 'user', content: `Continuação da conversa. Nova mensagem: ${mensagem}` }
+            ]);
+            
+            // Adicionar resposta da IA à conversa
+            conversa.mensagens.push({
+              texto: resposta,
+              tipo: 'ia'
+            });
+            
+            // Salvar conversa
+            await conversa.save();
+            
+            // Enviar resposta
+            await whatsappService.sendTextMessage(
+              telefone,
+              resposta
+            );
+          }
+        }
       }
       
-      await conversa.save();
-      
-      // Verificar se a conversa está em atendimento ou aguardando
-      if (conversa.status === 'aguardando') {
-        // Gerar resposta automatizada com IA
-        const resposta = await generateResponse(mensagem, [
-          { role: 'user', content: `Continuação da conversa. Nova mensagem: ${mensagem}` }
-        ]);
-        
-        // Adicionar resposta da IA à conversa
-        conversa.mensagens.push({
-          texto: resposta,
-          tipo: 'ia'
-        });
-        
-        await conversa.save();
-        
-        // Enviar resposta automatizada para o cliente
-        await whatsappService.sendTextMessage(
-          telefone,
-          resposta
-        );
-      }
-      
-      // Notificar via WebSocket
+      // Notificar via WebSocket sobre nova mensagem
       if (global.io) {
         global.io.emit('nova_mensagem', {
           conversaId: conversa._id,
