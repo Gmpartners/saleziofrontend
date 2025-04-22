@@ -30,5 +30,6 @@ jobs:
         run: |
           export SSHPASS=$SSH_PASS
           # Usar rsync com a opção --delete para excluir arquivos que não existem mais
-          sshpass -e rsync -avz --delete --exclude="node_modules" -e "ssh -o StrictHostKeyChecking=no" ./ root@157.230.229.74:/root/wpp-multiatendimento/main/
+          # Excluir node_modules e arquivos .env para preservar configurações locais
+          sshpass -e rsync -avz --delete --exclude="node_modules" --exclude=".env" -e "ssh -o StrictHostKeyChecking=no" ./ root@157.230.229.74:/root/wpp-multiatendimento/main/
           sshpass -e ssh -o StrictHostKeyChecking=no root@157.230.229.74 'cd /root/wpp-multiatendimento/main && npm install && export BRANCH=main && pm2 delete wpp-multiatendimento-main || true && PORT=3000 BRANCH=main pm2 start index.js --name wpp-multiatendimento-main'
