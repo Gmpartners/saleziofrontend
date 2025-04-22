@@ -1,7 +1,6 @@
 const Conversa = require('../models/Conversa');
 const Setor = require('../models/Setor');
 const { identifySetor, generateResponse } = require('../config/openrouter');
-const { io } = require('../app');
 
 // Obter conversas com filtros
 const getConversas = async (req, res) => {
@@ -100,13 +99,15 @@ const getOrCreateConversa = async (req, res) => {
       await conversa.save();
       
       // Notificar via socket.io
-      io.emit('nova_conversa', {
-        id: conversa._id,
-        cliente: conversa.cliente,
-        setor: conversa.setor,
-        assunto: conversa.assunto,
-        mensagem
-      });
+      if (global.io) {
+        global.io.emit('nova_conversa', {
+          id: conversa._id,
+          cliente: conversa.cliente,
+          setor: conversa.setor,
+          assunto: conversa.assunto,
+          mensagem
+        });
+      }
     } else {
       // Adicionar mensagem à conversa existente
       conversa.mensagens.push({
@@ -125,12 +126,14 @@ const getOrCreateConversa = async (req, res) => {
       await conversa.save();
       
       // Notificar via socket.io
-      io.emit('nova_mensagem', {
-        conversaId: conversa._id,
-        setor: conversa.setor,
-        cliente: conversa.cliente,
-        texto: mensagem
-      });
+      if (global.io) {
+        global.io.emit('nova_mensagem', {
+          conversaId: conversa._id,
+          setor: conversa.setor,
+          cliente: conversa.cliente,
+          texto: mensagem
+        });
+      }
     }
     
     res.status(200).json(conversa);
@@ -179,12 +182,14 @@ const updateConversaStatus = async (req, res) => {
       });
       
       // Notificar via socket.io
-      io.emit('conversa_transferida', {
-        conversaId: conversa._id,
-        setorAntigo: conversa.setor,
-        setorNovo: setor,
-        cliente: conversa.cliente
-      });
+      if (global.io) {
+        global.io.emit('conversa_transferida', {
+          conversaId: conversa._id,
+          setorAntigo: conversa.setor,
+          setorNovo: setor,
+          cliente: conversa.cliente
+        });
+      }
     }
     
     await conversa.save();
@@ -228,12 +233,14 @@ const addAtendenteMensagem = async (req, res) => {
     await conversa.save();
     
     // Notificar via socket.io
-    io.emit('resposta_atendente', {
-      conversaId: conversa._id,
-      setor: conversa.setor,
-      atendente,
-      texto
-    });
+    if (global.io) {
+      global.io.emit('resposta_atendente', {
+        conversaId: conversa._id,
+        setor: conversa.setor,
+        atendente,
+        texto
+      });
+    }
     
     res.status(200).json(conversa);
   } catch (error) {

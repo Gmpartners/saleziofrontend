@@ -6,7 +6,6 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 const http = require('http');
 const socketIo = require('socket.io');
-const setupSocketServer = require('./websocket/socket');
 
 // Importar rotas
 const apiRoutes = require('./routes/api');
@@ -37,6 +36,11 @@ app.use(express.json());
 app.use((req, res, next) => {
   const token = req.headers['x-api-token'];
   
+  // Rota de webhook sem autenticação para facilitar integração
+  if (req.path.startsWith('/api/webhook/')) {
+    return next();
+  }
+  
   if (!token || token !== process.env.API_TOKEN) {
     return res.status(401).json({ message: 'Não autorizado' });
   }
@@ -44,8 +48,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rotas
-app.use('/api', apiRoutes);
+// Exportar o objeto io para ser usado em outros módulos
+global.io = io;
 
 // Rota principal para verificação de funcionamento
 app.get('/', (req, res) => {
@@ -57,13 +61,17 @@ app.get('/', (req, res) => {
   });
 });
 
-// Configurar Socket.IO
+// Configurar Socket.IO - precisa ser depois da exportação global
+const setupSocketServer = require('./websocket/socket');
 setupSocketServer(io);
 
+// Rotas API - precisa ser depois da configuração do Socket.IO
+app.use('/api', apiRoutes);
+
 // Iniciar servidor
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3100; // Alterado para 3100 para evitar conflitos
 server.listen(port, () => {
   console.log(`Servidor rodando na porta ${port} - Branch: ${process.env.BRANCH || 'dev'}`);
 });
 
-module.exports = { app, server, io };
+module.exports = { app, server };
