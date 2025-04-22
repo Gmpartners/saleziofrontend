@@ -4,7 +4,7 @@ const usuarioSchema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
-    unique: true,
+    unique: true, // unique já cria um índice
     trim: true,
     lowercase: true
   },
@@ -52,7 +52,7 @@ const usuarioSchema = new mongoose.Schema({
 });
 
 // Índices para consultas frequentes
-usuarioSchema.index({ email: 1 });
+// Removido o índice duplicado de email, pois unique:true já cria um
 usuarioSchema.index({ setor: 1, role: 1 });
 
 // Atualizar data de alteração
