@@ -103,6 +103,32 @@ O sistema suporta comandos rápidos durante o atendimento usando o prefixo `/`:
 
 Além disso, é possível criar atalhos para templates digitando `/nome-do-template`.
 
+## Scripts de Manutenção
+
+### Limpar Conversas
+
+Para limpar o banco de dados de conversas durante testes:
+
+#### Método Interativo
+```bash
+cd /root/wpp-multiatendimento/dev  # ou /main para produção
+node scripts/limpar-conversas.js
+```
+
+#### Método Automatizado
+```bash
+# Limpar todas as conversas
+node scripts/limpar-conversas-auto.js all
+
+# Limpar apenas conversas em andamento
+node scripts/limpar-conversas-auto.js active
+
+# Limpar conversas de um número específico
+node scripts/limpar-conversas-auto.js phone 5521964738621
+```
+
+Estes scripts usam a variável MONGODB_URI do arquivo .env para determinar qual banco de dados limpar (dev ou main).
+
 ## API REST
 
 ### Autenticação
@@ -186,6 +212,10 @@ O sistema é projetado para funcionar em dois ambientes:
 - Porta Socket: 3002
 - URL: https://api.dominio.com/
 - Database: wpp-multiatendimento-main
+
+### Diferenças nos Webhooks
+- Desenvolvimento: http://api.dominio.com:8080/api/webhook/whatsapp/alfa
+- Produção: https://api.dominio.com/api/webhook/whatsapp/alfa
 
 ## Escalabilidade e Performance
 
