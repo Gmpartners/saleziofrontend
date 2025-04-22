@@ -120,3 +120,29 @@ Para integrar com uma API de WhatsApp, configure o webhook para enviar mensagens
 Este projeto é propriedade da GM Partners.
 # Teste workflow env preservation
 # Teste final de preservação de arquivos .env*
+
+## Scripts de Manutenção
+
+### Limpar Conversas
+
+Para limpar o banco de dados de conversas durante testes:
+
+#### Método Interativo
+```bash
+cd /root/wpp-multiatendimento/dev  # ou /main para produção
+node scripts/limpar-conversas.js
+```
+
+#### Método Automatizado
+```bash
+# Limpar todas as conversas
+node scripts/limpar-conversas-auto.js all
+
+# Limpar apenas conversas em andamento
+node scripts/limpar-conversas-auto.js active
+
+# Limpar conversas de um número específico
+node scripts/limpar-conversas-auto.js phone 5521964738621
+```
+
+Estes scripts usam a variável MONGODB_URI do arquivo .env para determinar qual banco de dados limpar (dev ou main).
