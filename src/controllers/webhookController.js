@@ -13,28 +13,53 @@ const processWhatsappWebhook = async (req, res) => {
   try {
     console.log('[Webhook] Payload recebido:', JSON.stringify(req.body));
     
-    // Validar se a requisição tem o token correto
-    const token = req.headers['x-api-token'];
-    if (!token || token !== process.env.API_TOKEN) {
-      console.error('[Webhook] Token inválido:', token);
-      return res.status(401).json({ success: false, message: 'Token inválido' });
+    // Validar o payload para garantir que é uma mensagem válida
+    // Extrair a API key do payload em vez de usar header
+    if (req.body.apikey) {
+      const payloadApiKey = req.body.apikey;
+      console.log(`[Webhook] API Key no payload: ${payloadApiKey.substring(0, 10)}...`);
     }
     
-    // Processar a mensagem recebida
-    const processedMessage = whatsappService.processIncomingMessage(req.body);
-    
-    // Validar se temos as informações necessárias
-    if (!processedMessage.telefone || !processedMessage.mensagem) {
-      console.error('[Webhook] Dados insuficientes:', JSON.stringify(processedMessage));
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Dados insuficientes. É necessário telefone e mensagem.' 
-      });
+    // Verificar se é uma mensagem de texto válida
+    if (!req.body.event || req.body.event !== 'messages.upsert') {
+      console.log('[Webhook] Evento não reconhecido ou não é uma mensagem');
+      return res.status(200).json({ success: true, message: 'Evento ignorado' });
     }
+    
+    // Verificar se existem os dados necessários
+    if (!req.body.data || !req.body.data.message) {
+      console.log('[Webhook] Dados da mensagem ausentes no payload');
+      return res.status(200).json({ success: true, message: 'Payload inválido' });
+    }
+    
+    // Extrair os dados da mensagem
+    const data = req.body.data;
+    
+    // Verificar se é uma mensagem de texto
+    if (!data.message.conversation && 
+        !(data.message.extendedTextMessage && data.message.extendedTextMessage.text)) {
+      console.log('[Webhook] Mensagem não é do tipo texto');
+      return res.status(200).json({ success: true, message: 'Tipo de mensagem não suportado' });
+    }
+    
+    // Obter o telefone do remetente
+    const telefone = data.key.remoteJid.split('@')[0];
+    
+    // Obter o nome do remetente
+    const nome = data.pushName || 'Cliente';
+    
+    // Obter o texto da mensagem
+    const mensagem = data.message.conversation || 
+                    (data.message.extendedTextMessage && data.message.extendedTextMessage.text);
+    
+    // Obter o ID do usuário (alfa)
+    const userId = req.params.userId || 'alfa';
+    
+    console.log(`[Webhook] Mensagem processada: Telefone=${telefone}, Nome=${nome}, Mensagem=${mensagem}, UserId=${userId}`);
     
     // Verificar se já existe uma conversa para este telefone
     let conversa = await Conversa.findOne({
-      'cliente.telefone': processedMessage.telefone,
+      'cliente.telefone': telefone,
       status: { $in: ['aguardando', 'em_andamento'] }
     });
     
@@ -55,25 +80,25 @@ const processWhatsappWebhook = async (req, res) => {
       }
       
       // Identificar o setor apropriado usando IA
-      const setorIdentificado = await identifySetor(processedMessage.mensagem, setores);
+      const setorIdentificado = await identifySetor(mensagem, setores);
       
       // Criar nova conversa
       conversa = new Conversa({
         cliente: {
-          nome: processedMessage.nome,
-          telefone: processedMessage.telefone
+          nome: nome,
+          telefone: telefone
         },
         setor: setorIdentificado !== 'não identificado' ? setorIdentificado : setores[0].nome,
         mensagens: [{
-          texto: processedMessage.mensagem,
+          texto: mensagem,
           tipo: 'cliente'
         }],
-        tags: ['whatsapp', processedMessage.userId || 'alfa']
+        tags: ['whatsapp', userId]
       });
       
       // Gerar resposta inicial automatizada com IA
-      const resposta = await generateResponse(processedMessage.mensagem, [
-        { role: 'user', content: `Meu nome é ${processedMessage.nome} e minha mensagem é: ${processedMessage.mensagem}` }
+      const resposta = await generateResponse(mensagem, [
+        { role: 'user', content: `Meu nome é ${nome} e minha mensagem é: ${mensagem}` }
       ]);
       
       // Adicionar resposta da IA à conversa
@@ -87,17 +112,26 @@ const processWhatsappWebhook = async (req, res) => {
       
       // Enviar resposta automatizada para o cliente
       await whatsappService.sendTextMessage(
-        processedMessage.telefone,
+        telefone,
         resposta
       );
       
       // Notificar via WebSocket (implementado no serviço de socket)
+      if (global.io) {
+        global.io.emit('nova_conversa', {
+          id: conversa._id,
+          cliente: conversa.cliente,
+          setor: conversa.setor,
+          assunto: conversa.assunto,
+          mensagem
+        });
+      }
       
-      console.log('[Webhook] Nova conversa criada para:', processedMessage.telefone);
+      console.log('[Webhook] Nova conversa criada para:', telefone);
     } else {
       // Adicionar mensagem à conversa existente
       conversa.mensagens.push({
-        texto: processedMessage.mensagem,
+        texto: mensagem,
         tipo: 'cliente'
       });
       
@@ -114,8 +148,8 @@ const processWhatsappWebhook = async (req, res) => {
       // Verificar se a conversa está em atendimento ou aguardando
       if (conversa.status === 'aguardando') {
         // Gerar resposta automatizada com IA
-        const resposta = await generateResponse(processedMessage.mensagem, [
-          { role: 'user', content: `Continuação da conversa. Nova mensagem: ${processedMessage.mensagem}` }
+        const resposta = await generateResponse(mensagem, [
+          { role: 'user', content: `Continuação da conversa. Nova mensagem: ${mensagem}` }
         ]);
         
         // Adicionar resposta da IA à conversa
@@ -128,14 +162,22 @@ const processWhatsappWebhook = async (req, res) => {
         
         // Enviar resposta automatizada para o cliente
         await whatsappService.sendTextMessage(
-          processedMessage.telefone,
+          telefone,
           resposta
         );
       }
       
-      // Notificar via WebSocket (implementado no serviço de socket)
+      // Notificar via WebSocket
+      if (global.io) {
+        global.io.emit('nova_mensagem', {
+          conversaId: conversa._id,
+          setor: conversa.setor,
+          cliente: conversa.cliente,
+          texto: mensagem
+        });
+      }
       
-      console.log('[Webhook] Mensagem adicionada à conversa existente:', processedMessage.telefone);
+      console.log('[Webhook] Mensagem adicionada à conversa existente:', telefone);
     }
     
     // Retornar sucesso
@@ -147,7 +189,8 @@ const processWhatsappWebhook = async (req, res) => {
     
   } catch (error) {
     console.error('[Webhook] Erro ao processar webhook:', error);
-    return res.status(500).json({ 
+    // Sempre retornar 200 para webhooks para evitar reenvios
+    return res.status(200).json({ 
       success: false, 
       message: `Erro ao processar webhook: ${error.message}` 
     });

@@ -25,12 +25,15 @@ const apiClient = axios.create({
  */
 const sendTextMessage = async (number, text, userId = 'system') => {
   try {
+    // Limpar o número se tiver o formato WhatsApp (com @s.whatsapp.net)
+    const cleanNumber = number.includes('@') ? number.split('@')[0] : number;
+    
     const response = await apiClient.post('/message/sendText/zapnumber', {
-      number,
+      number: cleanNumber,
       text
     });
     
-    console.log(`[WhatsApp] Mensagem enviada para ${number} por ${userId}: ${text}`);
+    console.log(`[WhatsApp] Mensagem enviada para ${cleanNumber} por ${userId}: ${text}`);
     return response.data;
   } catch (error) {
     console.error('[WhatsApp] Erro ao enviar mensagem:', error.message);
@@ -48,13 +51,46 @@ const processIncomingMessage = (data) => {
   
   try {
     // Extrair informações relevantes do payload
-    // Adaptação do formato da API para o formato interno da aplicação
-    // Isso dependerá do formato exato do webhook recebido
+    let phone = '';
+    let name = 'Cliente';
+    let message = '';
+    
+    // Nova estrutura da API do WhatsApp
+    if (data.event === 'messages.upsert' && data.data) {
+      const whatsappData = data.data;
+      
+      if (whatsappData.key && whatsappData.key.remoteJid) {
+        phone = whatsappData.key.remoteJid.split('@')[0];
+      }
+      
+      if (whatsappData.pushName) {
+        name = whatsappData.pushName;
+      }
+      
+      if (whatsappData.message) {
+        if (whatsappData.message.conversation) {
+          message = whatsappData.message.conversation;
+        } else if (whatsappData.message.extendedTextMessage && whatsappData.message.extendedTextMessage.text) {
+          message = whatsappData.message.extendedTextMessage.text;
+        }
+      }
+    } 
+    // Estrutura antiga ou genérica
+    else {
+      phone = data.from || data.number || data.sender || '';
+      name = data.pushname || data.name || data.sender_name || 'Cliente';
+      message = data.body || data.text || data.message || '';
+    }
+    
+    // Remover parte '@s.whatsapp.net' do número se presente
+    if (phone.includes('@')) {
+      phone = phone.split('@')[0];
+    }
     
     const processedMessage = {
-      telefone: data.from || data.number || '',
-      nome: data.pushname || data.sender || 'Cliente',
-      mensagem: data.body || data.text || '',
+      telefone: phone,
+      nome: name,
+      mensagem: message,
       timestamp: new Date().toISOString(),
       plataforma: 'whatsapp',
       userId: data.userId || 'alfa', // Usar o ID de usuário padrão 'alfa' se não for fornecido

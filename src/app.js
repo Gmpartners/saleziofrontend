@@ -30,16 +30,16 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Aumentar limite para payloads maiores
 
 // Autenticação simples via token para todas as rotas
 app.use((req, res, next) => {
-  const token = req.headers['x-api-token'];
-  
-  // Rota de webhook sem autenticação para facilitar integração
+  // Webhook completamente aberto para facilitar integração
   if (req.path.startsWith('/api/webhook/')) {
     return next();
   }
+  
+  const token = req.headers['x-api-token'];
   
   if (!token || token !== process.env.API_TOKEN) {
     return res.status(401).json({ message: 'Não autorizado' });
@@ -68,8 +68,14 @@ setupSocketServer(io);
 // Rotas API - precisa ser depois da configuração do Socket.IO
 app.use('/api', apiRoutes);
 
+// Middleware para erros
+app.use((err, req, res, next) => {
+  console.error('Erro na aplicação:', err);
+  res.status(500).json({ message: 'Erro interno no servidor', error: err.message });
+});
+
 // Iniciar servidor
-const port = process.env.PORT || 3100; // Alterado para 3100 para evitar conflitos
+const port = process.env.PORT || 3100;
 server.listen(port, () => {
   console.log(`Servidor rodando na porta ${port} - Branch: ${process.env.BRANCH || 'dev'}`);
 });
