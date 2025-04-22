@@ -118,3 +118,4 @@ Para integrar com uma API de WhatsApp, configure o webhook para enviar mensagens
 ## Licença
 
 Este projeto é propriedade da GM Partners.
+# Teste workflow env preservation
