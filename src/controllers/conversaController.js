@@ -1,6 +1,7 @@
 const Conversa = require('../models/Conversa');
 const Setor = require('../models/Setor');
 const { identifySetor, generateResponse } = require('../config/openrouter');
+const whatsappService = require('../services/whatsappService');
 
 // Obter conversas com filtros
 const getConversas = async (req, res) => {
@@ -83,13 +84,15 @@ const getOrCreateConversa = async (req, res) => {
         mensagens: [{
           texto: mensagem,
           tipo: 'cliente'
-        }]
+        }],
+        metadata: {
+          esperandoConfirmacao: false,
+          setorSugerido: null
+        }
       });
       
-      // Resposta inicial da IA
-      const resposta = await generateResponse(mensagem, [
-        { role: 'user', content: `Meu nome é ${nome || 'Cliente'} e minha mensagem é: ${mensagem}` }
-      ]);
+      // Resposta inicial da IA - Saudação simplificada
+      const resposta = "Olá! Como posso ajudar?";
       
       conversa.mensagens.push({
         texto: resposta,
@@ -97,6 +100,12 @@ const getOrCreateConversa = async (req, res) => {
       });
       
       await conversa.save();
+      
+      // Enviar resposta para o cliente
+      await whatsappService.sendTextMessage(
+        telefone,
+        resposta
+      );
       
       // Notificar via socket.io
       if (global.io) {
@@ -176,10 +185,18 @@ const updateConversaStatus = async (req, res) => {
       conversa.setor = setor;
       
       // Adicionar mensagem de sistema sobre a transferência
+      const mensagemTransferencia = `Estaremos transferindo para o ${setor}!`;
+      
       conversa.mensagens.push({
-        texto: `Conversa transferida para o setor ${setor}`,
+        texto: mensagemTransferencia,
         tipo: 'ia'
       });
+      
+      // Enviar mensagem para o cliente sobre a transferência
+      await whatsappService.sendTextMessage(
+        conversa.cliente.telefone,
+        mensagemTransferencia
+      );
       
       // Notificar via socket.io
       if (global.io) {
@@ -231,6 +248,14 @@ const addAtendenteMensagem = async (req, res) => {
     conversa.atualizadoEm = Date.now();
     
     await conversa.save();
+    
+    // Enviar mensagem para o cliente com o nome do atendente
+    await whatsappService.sendTextMessage(
+      conversa.cliente.telefone,
+      texto,
+      'atendente',
+      atendente
+    );
     
     // Notificar via socket.io
     if (global.io) {
