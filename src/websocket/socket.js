@@ -492,35 +492,6 @@ const setupSocketServer = (io) => {
         await transferirConversa(socket, conversaId, novoSetor);
       });
       
-      // Evento para indicar "digitando"
-      socket.on('digitando:inicio', (conversaId) => {
-        if (!conversaId) return;
-        
-        io.to(`conversa:${conversaId}`).emit('digitando', {
-          conversaId,
-          usuario: {
-            id: socket.user.id,
-            nome: socket.user.nome,
-            nomeExibicao: socket.user.nomeExibicao
-          },
-          digitando: true
-        });
-      });
-      
-      socket.on('digitando:fim', (conversaId) => {
-        if (!conversaId) return;
-        
-        io.to(`conversa:${conversaId}`).emit('digitando', {
-          conversaId,
-          usuario: {
-            id: socket.user.id,
-            nome: socket.user.nome,
-            nomeExibicao: socket.user.nomeExibicao
-          },
-          digitando: false
-        });
-      });
-      
       // Desconexão
       socket.on('disconnect', () => {
         const usuario = usuariosConectados.get(socket.id);
