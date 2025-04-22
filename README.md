@@ -119,3 +119,4 @@ Para integrar com uma API de WhatsApp, configure o webhook para enviar mensagens
 
 Este projeto é propriedade da GM Partners.
 # Teste workflow env preservation
+# Teste final de preservação de arquivos .env*
