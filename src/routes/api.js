@@ -33,8 +33,25 @@ router.get('/gerar-token-teste', (req, res) => {
   res.status(200).json({ token });
 });
 
-// COMENTADO TEMPORARIAMENTE PARA TESTES
-// router.use(verifyToken);
+// MIDDLEWARE TEMPORÁRIO PARA TESTES - Simula um usuário admin
+// REMOVER EM PRODUÇÃO
+if (process.env.BRANCH === 'dev') {
+  router.use((req, res, next) => {
+    // Simular um usuário admin para testes
+    req.user = {
+      id: 'test-admin',
+      email: 'admin@test.com',
+      nome: 'Admin Teste',
+      nomeExibicao: 'Admin de Testes',
+      role: 'admin',
+      setor: 'Suporte'
+    };
+    next();
+  });
+} else {
+  // Middleware normal de autenticação para produção
+  router.use(verifyToken);
+}
 
 // Sincronização e perfil de usuário
 router.post('/sync-user', usuarioController.syncUsuario);
