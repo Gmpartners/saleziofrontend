@@ -5,6 +5,7 @@ const router = express.Router();
 const setorController = require('../controllers/setorController');
 const conversaController = require('../controllers/conversaController');
 const templateController = require('../controllers/templateController');
+const webhookController = require('../controllers/webhookController');
 
 // Rotas para setores
 router.get('/setores', setorController.getSetores);
@@ -27,5 +28,9 @@ router.post('/templates', templateController.createTemplate);
 router.get('/templates/:id', templateController.getTemplateById);
 router.put('/templates/:id', templateController.updateTemplate);
 router.delete('/templates/:id', templateController.deleteTemplate);
+
+// Rotas para webhooks
+router.post('/webhook/whatsapp', webhookController.processWhatsappWebhook);
+router.post('/webhook/whatsapp/:userId', webhookController.processWhatsappWebhook);
 
 module.exports = router;
