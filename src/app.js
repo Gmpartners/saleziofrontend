@@ -6,6 +6,7 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 const http = require('http');
 const socketIo = require('socket.io');
+const jwt = require('jsonwebtoken');
 
 // Importar rotas
 const apiRoutes = require('./routes/api');
@@ -16,7 +17,8 @@ const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
     origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE']
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization']
   }
 });
 
@@ -32,13 +34,20 @@ mongoose.connect(process.env.MONGODB_URI)
 app.use(cors());
 app.use(express.json({ limit: '10mb' })); // Aumentar limite para payloads maiores
 
-// Autenticação simples via token para todas as rotas
+// Verificação de autenticação antiga (token simples)
+// Mantida para compatibilidade com clientes existentes
 app.use((req, res, next) => {
+  // Verificar se a requisição está usando o novo método de autenticação
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+    return next(); // Usar o novo middleware de autenticação JWT
+  }
+  
   // Webhook completamente aberto para facilitar integração
   if (req.path.startsWith('/api/webhook/')) {
     return next();
   }
   
+  // Método antigo usando x-api-token
   const token = req.headers['x-api-token'];
   
   if (!token || token !== process.env.API_TOKEN) {
@@ -65,7 +74,7 @@ app.get('/', (req, res) => {
 const setupSocketServer = require('./websocket/socket');
 setupSocketServer(io);
 
-// Rotas API - precisa ser depois da configuração do Socket.IO
+// Rotas API
 app.use('/api', apiRoutes);
 
 // Middleware para erros
@@ -78,6 +87,7 @@ app.use((err, req, res, next) => {
 const port = process.env.PORT || 3100;
 server.listen(port, () => {
   console.log(`Servidor rodando na porta ${port} - Branch: ${process.env.BRANCH || 'dev'}`);
+  console.log(`Sistema de multiatendimento WhatsApp com autenticação baseada em tokens JWT`);
 });
 
 module.exports = { app, server };
