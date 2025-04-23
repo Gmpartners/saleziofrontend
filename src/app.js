@@ -34,28 +34,31 @@ mongoose.connect(process.env.MONGODB_URI)
 app.use(cors());
 app.use(express.json({ limit: '10mb' })); // Aumentar limite para payloads maiores
 
-// Verificação de autenticação antiga (token simples)
-// Mantida para compatibilidade com clientes existentes
-app.use((req, res, next) => {
-  // Verificar se a requisição está usando o novo método de autenticação
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
-    return next(); // Usar o novo middleware de autenticação JWT
-  }
-  
-  // Webhook completamente aberto para facilitar integração
-  if (req.path.startsWith('/api/webhook/')) {
-    return next();
-  }
-  
-  // Método antigo usando x-api-token
-  const token = req.headers['x-api-token'];
-  
-  if (!token || token !== process.env.API_TOKEN) {
-    return res.status(401).json({ message: 'Não autorizado' });
-  }
-  
-  next();
-});
+// COMENTADO TEMPORARIAMENTE PARA TESTES - Usar apenas em ambiente de produção
+if (process.env.BRANCH !== 'dev') {
+  // Verificação de autenticação antiga (token simples)
+  // Mantida para compatibilidade com clientes existentes
+  app.use((req, res, next) => {
+    // Verificar se a requisição está usando o novo método de autenticação
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      return next(); // Usar o novo middleware de autenticação JWT
+    }
+    
+    // Webhook completamente aberto para facilitar integração
+    if (req.path.startsWith('/api/webhook/')) {
+      return next();
+    }
+    
+    // Método antigo usando x-api-token
+    const token = req.headers['x-api-token'];
+    
+    if (!token || token !== process.env.API_TOKEN) {
+      return res.status(401).json({ message: 'Não autorizado' });
+    }
+    
+    next();
+  });
+}
 
 // Exportar o objeto io para ser usado em outros módulos
 global.io = io;
@@ -66,7 +69,8 @@ app.get('/', (req, res) => {
     status: 'online',
     branch: process.env.BRANCH || 'dev',
     version: '1.0.0',
-    serverTime: new Date().toISOString()
+    serverTime: new Date().toISOString(),
+    testMode: process.env.BRANCH === 'dev' ? true : false
   });
 });
 
@@ -87,6 +91,9 @@ app.use((err, req, res, next) => {
 const port = process.env.PORT || 3100;
 server.listen(port, () => {
   console.log(`Servidor rodando na porta ${port} - Branch: ${process.env.BRANCH || 'dev'}`);
+  if (process.env.BRANCH === 'dev') {
+    console.log(`MODO DE TESTE: Autenticação desativada para facilitar testes`);
+  }
   console.log(`Sistema de multiatendimento WhatsApp com autenticação baseada em tokens JWT`);
 });
 
