@@ -4,6 +4,7 @@ const Conversa = require('../models/Conversa');
 const Template = require('../models/Template');
 const Usuario = require('../models/Usuario');
 const whatsappService = require('../services/whatsappService');
+const mongoose = require('mongoose');
 
 const setupSocketServer = (io) => {
   // Middleware de autenticação para WebSocket
@@ -361,6 +362,14 @@ const setupSocketServer = (io) => {
       // Evento para selecionar uma conversa específica
       socket.on('conversa:selecionar', async (conversaId) => {
         try {
+          // CORREÇÃO: Validar se o conversaId é um ObjectId válido
+          if (!conversaId || conversaId === 'new' || !mongoose.Types.ObjectId.isValid(conversaId)) {
+            return socket.emit('error', { 
+              message: 'ID de conversa inválido', 
+              details: `O ID "${conversaId}" não é um ID válido de MongoDB` 
+            });
+          }
+          
           const conversa = await Conversa.findById(conversaId);
           
           if (!conversa) {
@@ -405,6 +414,14 @@ const setupSocketServer = (io) => {
       socket.on('mensagem:enviar', async (data) => {
         try {
           const { conversaId, texto } = data;
+          
+          // CORREÇÃO: Validar se o conversaId é um ObjectId válido
+          if (!conversaId || !mongoose.Types.ObjectId.isValid(conversaId)) {
+            return socket.emit('error', { 
+              message: 'ID de conversa inválido', 
+              details: `O ID "${conversaId}" não é um ID válido de MongoDB` 
+            });
+          }
           
           if (!texto || !texto.trim()) {
             return socket.emit('error', { message: 'Mensagem vazia' });
@@ -451,8 +468,8 @@ const setupSocketServer = (io) => {
           await whatsappService.sendTextMessage(
             conversa.cliente.telefone,
             texto,
-            socket.user.nomeExibicao,
-            conversa.setor
+            socket.user.id,
+            socket.user.nomeExibicao
           );
           
           // Notificar todos na sala da conversa
@@ -483,12 +500,29 @@ const setupSocketServer = (io) => {
       
       // Evento para finalizar conversa (via botão, não comando)
       socket.on('conversa:finalizar', async (conversaId) => {
+        // CORREÇÃO: Validar se o conversaId é um ObjectId válido
+        if (!conversaId || !mongoose.Types.ObjectId.isValid(conversaId)) {
+          return socket.emit('error', { 
+            message: 'ID de conversa inválido', 
+            details: `O ID "${conversaId}" não é um ID válido de MongoDB` 
+          });
+        }
+        
         await finalizarConversa(socket, conversaId);
       });
       
       // Evento para transferir conversa (via botão, não comando)
       socket.on('conversa:transferir', async (data) => {
         const { conversaId, novoSetor } = data;
+        
+        // CORREÇÃO: Validar se o conversaId é um ObjectId válido
+        if (!conversaId || !mongoose.Types.ObjectId.isValid(conversaId)) {
+          return socket.emit('error', { 
+            message: 'ID de conversa inválido', 
+            details: `O ID "${conversaId}" não é um ID válido de MongoDB` 
+          });
+        }
+        
         await transferirConversa(socket, conversaId, novoSetor);
       });
       
