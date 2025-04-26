@@ -1,7 +1,7 @@
 import { createContext, useReducer, useEffect, useMemo } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "../firebase/config";
-import apiService from "../services/api";
+import { auth, db } from "../firebase/config";
+import { doc, getDoc } from "firebase/firestore";
 
 // Criando o contexto
 export const AuthContext = createContext();
@@ -85,66 +85,78 @@ export function AuthContextProvider({ children }) {
       localStorage.setItem('userEmail', user.email);
       
       if (userData) {
-        localStorage.setItem('userName', userData.nome || 'Usuário');
-        localStorage.setItem('userDisplayName', userData.nomeExibicao || userData.nome || 'Usuário');
-        localStorage.setItem('userRole', userData.role || 'representante');
-        localStorage.setItem('userSector', userData.setor || 'Suporte');
+        localStorage.setItem('userName', userData.displayName || 'Usuário');
+        localStorage.setItem('userDisplayName', userData.displayName || 'Usuário');
+        localStorage.setItem('userRole', userData.role || 'agent');
+        localStorage.setItem('userSector', userData.sector || '');
+        localStorage.setItem('userSectorName', userData.sectorName || '');
       }
     }
   };
 
-  // Função para sincronizar usuário com o backend
-  const syncUserWithBackend = async (user) => {
+  // Função para buscar perfil do usuário do Firestore
+  const fetchUserProfile = async (user) => {
     if (!user) return null;
     
     try {
-      console.log("Sincronizando usuário com o backend...");
+      // Obter dados do usuário do Firestore
+      const userRef = doc(db, 'users', user.uid);
+      const userDoc = await getDoc(userRef);
       
-      // Obter token do Firebase
-      const token = await user.getIdToken(true);
-      localStorage.setItem('authToken', token);
-      
-      // Sincronizar com o backend
-      const response = await apiService.syncUser();
-      
-      if (response) {
-        actions.setUserProfile(response.usuario);
-        saveUserToLocalStorage(user, response.usuario);
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        
+        // Criar perfil completo
+        const userProfile = {
+          ...userData,
+          id: user.uid,
+          email: user.email,
+          // Garantir que o papel seja "admin" ou "agent"
+          role: userData.role === 'admin' ? 'admin' : 'agent',
+          // Garantir que os campos de setorização existam
+          sector: userData.sector || '',
+          sectorName: userData.sectorName || ''
+        };
+        
+        actions.setUserProfile(userProfile);
+        saveUserToLocalStorage(user, userProfile);
+        
+        return userProfile;
+      } else {
+        console.warn('Perfil do usuário não encontrado no Firestore');
+        
+        // Usar dados básicos do Firebase Auth
+        const basicProfile = {
+          id: user.uid,
+          displayName: user.displayName || 'Usuário',
+          email: user.email,
+          role: 'agent',
+          sector: '',
+          sectorName: '',
+          isActive: true
+        };
+        
+        actions.setUserProfile(basicProfile);
+        saveUserToLocalStorage(user, basicProfile);
+        
+        return basicProfile;
       }
-      
-      return response?.usuario;
     } catch (error) {
-      console.error('Erro ao sincronizar usuário:', error);
+      console.error('Erro ao buscar perfil do usuário:', error);
       
       // Tentar recuperar dados do localStorage como fallback
       const fallbackProfile = {
         id: localStorage.getItem('userId') || user.uid,
-        nome: localStorage.getItem('userName') || user.displayName || 'Usuário',
-        nomeExibicao: localStorage.getItem('userDisplayName') || user.displayName || 'Usuário',
+        displayName: localStorage.getItem('userDisplayName') || user.displayName || 'Usuário',
         email: localStorage.getItem('userEmail') || user.email,
-        role: localStorage.getItem('userRole') || 'representante',
-        setor: localStorage.getItem('userSector') || 'Suporte'
+        role: localStorage.getItem('userRole') || 'agent',
+        sector: localStorage.getItem('userSector') || '',
+        sectorName: localStorage.getItem('userSectorName') || ''
       };
       
       actions.setUserProfile(fallbackProfile);
       return fallbackProfile;
     }
-  };
-
-  // Função para revalidar autenticação (forçar novo token)
-  const revalidateAuth = async () => {
-    if (auth.currentUser) {
-      try {
-        // Forçar obtenção de um novo token do Firebase
-        const token = await auth.currentUser.getIdToken(true);
-        localStorage.setItem('authToken', token);
-        return true;
-      } catch (error) {
-        console.error('Erro ao revalidar autenticação:', error);
-        return false;
-      }
-    }
-    return false;
   };
 
   // Monitorar mudanças de auth
@@ -153,8 +165,12 @@ export function AuthContextProvider({ children }) {
       actions.setAuthReady(user);
       
       if (user) {
-        // Sincronizar perfil do usuário quando autenticado
-        await syncUserWithBackend(user);
+        // Buscar o perfil do usuário do Firestore
+        await fetchUserProfile(user);
+        
+        // Obter token do Firebase
+        const token = await user.getIdToken(true);
+        localStorage.setItem('authToken', token);
       } else {
         // Limpar dados locais quando deslogado
         localStorage.removeItem('userId');
@@ -163,6 +179,8 @@ export function AuthContextProvider({ children }) {
         localStorage.removeItem('userEmail');
         localStorage.removeItem('userRole');
         localStorage.removeItem('userSector');
+        localStorage.removeItem('userSectorName');
+        localStorage.removeItem('authToken');
       }
     });
 
@@ -176,10 +194,13 @@ export function AuthContextProvider({ children }) {
     // Verificar token a cada 10 minutos
     const tokenInterval = setInterval(async () => {
       try {
-        // Renovar token JWT se necessário
-        await revalidateAuth();
+        if (auth.currentUser) {
+          // Renovar token JWT
+          const token = await auth.currentUser.getIdToken(true);
+          localStorage.setItem('authToken', token);
+        }
       } catch (error) {
-        console.error('Erro ao verificar autenticação:', error);
+        console.error('Erro ao renovar token:', error);
       }
     }, 10 * 60 * 1000); // 10 minutos
     
@@ -196,10 +217,12 @@ export function AuthContextProvider({ children }) {
     
     // Propriedades derivadas
     isAdmin: state.userProfile?.role === 'admin',
-    userSetor: state.userProfile?.setor,
+    userSector: state.userProfile?.sector || '',
+    userSectorName: state.userProfile?.sectorName || '',
     
     // Ações úteis
-    actions,
+    login: actions.login,
+    logout: actions.logout,
     
     // Firebase auth instance (pode ser útil em alguns casos)
     auth,
@@ -207,25 +230,8 @@ export function AuthContextProvider({ children }) {
     // Helpers
     isAuthenticated: !!state.user,
     
-    // Funções de autenticação
-    revalidateAuth,
-    syncUserWithBackend,
-    
-    // Funções de perfil
-    updateProfile: async (data) => {
-      try {
-        const updatedProfile = await apiService.updateProfile(data);
-        if (updatedProfile) {
-          actions.setUserProfile(updatedProfile);
-          saveUserToLocalStorage(state.user, updatedProfile);
-        }
-        return updatedProfile;
-      } catch (error) {
-        console.error('Erro ao atualizar perfil:', error);
-        actions.setError('Falha ao atualizar perfil. Tente novamente.');
-        throw error;
-      }
-    },
+    // Funções auxiliares
+    fetchUserProfile,
     
     // Dispatch original (caso seja necessário)
     dispatch

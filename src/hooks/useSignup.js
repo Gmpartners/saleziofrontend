@@ -52,12 +52,23 @@ export const useSignup = () => {
           online: true,
           createdAt: timestamp,
           email: email,
-          name: name,
+          
+          // Usar displayName em vez de name (padronização)
+          displayName: name,
+          
           phoneNumber: phoneNumber,
-          companyName: companyName, // Novo campo adicionado
-          jobTitle: jobTitle || "", // Novo campo adicionado (com valor padrão caso seja opcional)
+          companyName: companyName,
+          jobTitle: jobTitle || "",
+          
+          // Campos adicionais para setorização
+          role: "agent",         // Por padrão, novos usuários são agentes
+          sector: "",            // Vazio por padrão, será atribuído pelo admin
+          sectorName: "",        // Vazio por padrão
+          isActive: true,        // Ativo por padrão
+          
           accountStatus: 'active',
-          lastLogin: timestamp
+          lastLogin: timestamp,
+          updatedAt: timestamp   // Adicionar timestamp de atualização
         });
       }
 
