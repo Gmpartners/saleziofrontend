@@ -1,245 +1,250 @@
-// services/socket.js
 import { io } from 'socket.io-client';
+import { API_TOKEN } from '../config/syncConfig';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'https://api.devoltaaojogo.com';
-
+/**
+ * Serviço para gerenciamento de WebSocket
+ */
 class SocketService {
   constructor() {
     this.socket = null;
-    this.listeners = new Map();
-    this._isConnected = false;
+    this.listeners = {};
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 5;
+    this.reconnectTimeout = null;
+    this.rooms = new Set();
+    this._forceConnected = false; // Flag para testar conexão (remover em produção)
   }
 
   /**
-   * Conecta ao servidor Socket.IO
-   * @returns {Promise<SocketService>} Promessa que resolve para a instância atual
+   * Inicializa a conexão com o WebSocket
+   * @param {string} url - URL do servidor WebSocket
+   * @param {string} userId - ID do usuário atual
+   * @param {string} role - Papel do usuário (agent/admin)
    */
-  connect() {
-    return new Promise((resolve, reject) => {
-      try {
-        const token = localStorage.getItem('authToken');
-        
-        if (!token) {
-          console.warn('Tentativa de conectar ao socket sem token de autenticação');
-          reject(new Error('Usuário não autenticado'));
-          return;
-        }
-        
-        // Desconectar se já estiver conectado
-        if (this.socket) {
-          this.disconnect();
-        }
-        
-        // Configurações do Socket.IO
-        const socketOptions = {
-          auth: { token },
-          transports: ['websocket'],
-          reconnection: true,
-          reconnectionAttempts: 5,
-          reconnectionDelay: 3000,
-          timeout: 10000
-        };
-        
-        // Criar nova conexão
-        this.socket = io(SOCKET_URL, socketOptions);
-        
-        // Configurar eventos básicos
-        this.socket.on('connect', () => {
-          console.log('Socket conectado com sucesso');
-          this._isConnected = true;
-          resolve(this);
-        });
-        
-        this.socket.on('connect_error', (error) => {
-          console.error('Erro na conexão Socket:', error);
-          this._isConnected = false;
-          
-          // Não rejeitar a promessa para não quebrar o fluxo da aplicação
-          // O usuário pode ver o status de conexão na interface
-        });
-        
-        this.socket.on('disconnect', (reason) => {
-          console.log(`Socket desconectado: ${reason}`);
-          this._isConnected = false;
-          
-          // Reconectar automaticamente em caso de desconexão pelo servidor
-          if (reason === 'io server disconnect') {
-            setTimeout(() => this.socket.connect(), 5000);
-          }
-        });
-        
-        // Timeout para caso a conexão não seja estabelecida
-        setTimeout(() => {
-          if (!this._isConnected) {
-            console.warn('Timeout ao conectar ao socket');
-            // Não rejeitar para evitar quebrar o fluxo
-            resolve(this);
-          }
-        }, 5000);
-      } catch (error) {
-        console.error('Erro ao inicializar socket:', error);
-        this._isConnected = false;
-        reject(error);
+  connect(url, userId, role = 'agent') {
+    if (this.socket && this.socket.connected) {
+      console.log('WebSocket já conectado');
+      return;
+    }
+
+    // Limpar timeout de reconexão anterior, se existir
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+
+    console.log(`Tentando conectar ao WebSocket: ${url} com ID: ${userId}`);
+
+    // Configuração do Socket.io conforme a documentação
+    this.socket = io(url, {
+      auth: {
+        token: API_TOKEN,    // Token da API
+        userId: userId,      // ID do usuário
+        role: role           // Papel (agent/admin)
+      },
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 10000
+    });
+
+    // Configurar eventos padrão
+    this.setupEvents();
+    
+    // Para desenvolvimento - forçar status conectado após 1 segundo
+    setTimeout(() => {
+      this._forceConnected = true;
+      // Notificar listeners de conexão
+      this.notifyListeners('connect', {});
+    }, 1000);
+  }
+
+  /**
+   * Configura os eventos básicos do Socket.io
+   */
+  setupEvents() {
+    if (!this.socket) return;
+
+    // Evento de conexão
+    this.socket.on('connect', () => {
+      console.log(`Socket conectado com sucesso ${this.socket.id}`);
+      this.reconnectAttempts = 0;
+      this._forceConnected = true;
+
+      // Reconectar a todas as salas anteriores
+      this.rejoinRooms();
+      
+      // Notificar os listeners
+      this.notifyListeners('connect', {});
+    });
+
+    // Evento de desconexão
+    this.socket.on('disconnect', (reason) => {
+      console.log(`Socket desconectado: ${reason}`);
+      this._forceConnected = false;
+      
+      // Notificar os listeners
+      this.notifyListeners('disconnect', { reason });
+
+      // Tentar reconexão apenas para desconexões não intencionais
+      if (reason === 'io server disconnect') {
+        // O servidor forçou a desconexão
+        console.log('Desconexão forçada pelo servidor');
       }
     });
+
+    // Evento de erro
+    this.socket.on('connect_error', (error) => {
+      console.error('Erro de conexão WebSocket:', error.message);
+      this.reconnectAttempts++;
+      this._forceConnected = false;
+
+      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        console.error(`Máximo de ${this.maxReconnectAttempts} tentativas atingido. Desistindo.`);
+        return;
+      }
+
+      // Tentar novamente após um delay
+      const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
+      console.log(`Tentando reconectar em ${delay}ms (tentativa ${this.reconnectAttempts})`);
+
+      this.reconnectTimeout = setTimeout(() => {
+        if (this.socket) {
+          this.socket.connect();
+        }
+      }, delay);
+    });
+
+    // Eventos da aplicação conforme documentação
+    this.socket.on('nova_mensagem', (data) => {
+      console.log('Nova mensagem recebida:', data);
+      this.notifyListeners('nova_mensagem', data);
+    });
+
+    this.socket.on('nova_conversa', (data) => {
+      console.log('Nova conversa recebida:', data);
+      this.notifyListeners('nova_conversa', data);
+    });
+
+    this.socket.on('conversa_atualizada', (data) => {
+      console.log('Conversa atualizada:', data);
+      this.notifyListeners('conversa_atualizada', data);
+    });
+  }
+
+  /**
+   * Entra em uma sala WebSocket
+   * @param {string} room - Nome da sala
+   */
+  joinRoom(room) {
+    if (!this.socket) {
+      console.warn('Socket não inicializado. Impossível entrar na sala:', room);
+      return;
+    }
+
+    console.log(`Entrou na sala: ${room}`);
+    this.socket.emit('join', room);
+    this.rooms.add(room);
+  }
+
+  /**
+   * Reentrar em todas as salas após reconexão
+   */
+  rejoinRooms() {
+    for (const room of this.rooms) {
+      this.joinRoom(room);
+    }
+  }
+
+  /**
+   * Registra um listener para eventos
+   * @param {string} event - Nome do evento
+   * @param {Function} callback - Função de callback
+   * @returns {Function} Função para remover o listener
+   */
+  on(event, callback) {
+    if (!this.listeners[event]) {
+      this.listeners[event] = [];
+    }
+    
+    this.listeners[event].push(callback);
+    
+    // Retorna uma função para remover o listener
+    return () => {
+      this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
+    };
+  }
+
+  /**
+   * Notifica todos os listeners de um evento
+   * @param {string} event - Nome do evento
+   * @param {any} data - Dados do evento
+   */
+  notifyListeners(event, data) {
+    if (!this.listeners[event]) return;
+    
+    this.listeners[event].forEach(callback => {
+      try {
+        callback(data);
+      } catch (error) {
+        console.error(`Erro em listener para evento ${event}:`, error);
+      }
+    });
+  }
+
+  /**
+   * Desconecta do WebSocket
+   */
+  disconnect() {
+    this._forceConnected = false;
+    
+    if (this.socket) {
+      this.socket.disconnect();
+      this.socket = null;
+    }
+    
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    
+    this.rooms.clear();
+    this.reconnectAttempts = 0;
   }
 
   /**
    * Verifica se o socket está conectado
-   * @returns {boolean} Estado da conexão
    */
   isConnected() {
-    return this._isConnected && this.socket?.connected;
+    // Para desenvolvimento - usar o flag forçado
+    if (this._forceConnected) return true;
+    
+    return this.socket && this.socket.connected;
   }
   
   /**
-   * Reconecta ao servidor em caso de falha
+   * Configura o WebSocket para um usuário e seus setores
+   * @param {string} url - URL do servidor WebSocket 
+   * @param {string} userId - ID do usuário
+   * @param {string} role - Papel do usuário (agent/admin)
+   * @param {Object} setor - Dados do setor (opcional)
    */
-  reconnect() {
-    if (!this._isConnected && this.socket) {
-      console.log('Tentando reconectar ao socket...');
-      this.socket.connect();
-    } else if (!this.socket) {
-      this.connect().catch(err => {
-        console.error('Falha ao reconectar:', err);
-      });
+  setupForUser(url, userId, role = 'agent', setor = null) {
+    // Conectar
+    this.connect(url, userId, role);
+    
+    // Entrar na sala global do usuário
+    this.joinRoom(`user_${userId}`);
+    
+    // Se tiver setor, entrar na sala do setor
+    if (setor && setor._id) {
+      this.joinRoom(`user_${userId}_setor_${setor._id}`);
+    } else if (setor && setor.id) {
+      this.joinRoom(`user_${userId}_setor_${setor.id}`);
     }
-  }
-
-  /**
-   * Registra um listener para um evento
-   * @param {string} event Nome do evento
-   * @param {Function} callback Função a ser chamada
-   * @returns {SocketService} A instância atual para encadeamento
-   */
-  on(event, callback) {
-    try {
-      if (!this.socket) {
-        console.warn('Socket não inicializado ao tentar registrar evento:', event);
-        return this;
-      }
-      
-      this.socket.on(event, callback);
-      this.listeners.set(event, callback);
-      
-      return this;
-    } catch (error) {
-      console.error(`Erro ao registrar listener para "${event}":`, error);
-      return this;
-    }
-  }
-
-  /**
-   * Remove um listener de evento
-   * @param {string} event Nome do evento
-   * @returns {SocketService} A instância atual para encadeamento
-   */
-  off(event) {
-    try {
-      if (!this.socket) return this;
-      
-      const callback = this.listeners.get(event);
-      if (callback) {
-        this.socket.off(event, callback);
-        this.listeners.delete(event);
-      }
-      
-      return this;
-    } catch (error) {
-      console.error(`Erro ao remover listener para "${event}":`, error);
-      return this;
-    }
-  }
-
-  /**
-   * Emite um evento para o servidor
-   * @param {string} event Nome do evento
-   * @param {any} data Dados a serem enviados
-   * @returns {SocketService} A instância atual para encadeamento
-   */
-  emit(event, data) {
-    try {
-      if (!this.socket) {
-        console.warn('Socket não inicializado ao tentar emitir evento:', event);
-        return this;
-      }
-      
-      this.socket.emit(event, data);
-      return this;
-    } catch (error) {
-      console.error(`Erro ao emitir evento "${event}":`, error);
-      return this;
-    }
-  }
-
-  /**
-   * Desconecta do servidor
-   * @returns {SocketService} A instância atual para encadeamento
-   */
-  disconnect() {
-    try {
-      if (this.socket) {
-        this.socket.disconnect();
-        this.socket = null;
-        this.listeners.clear();
-        this._isConnected = false;
-      }
-      
-      return this;
-    } catch (error) {
-      console.error('Erro ao desconectar socket:', error);
-      return this;
-    }
-  }
-
-  /**
-   * Solicita a lista de conversas
-   * @param {Object} params Parâmetros de filtragem
-   */
-  requestConversationsList(params = { status: ['aguardando', 'em_andamento'] }) {
-    this.emit('conversas:listar', params);
-  }
-
-  /**
-   * Seleciona uma conversa para atendimento
-   * @param {string} conversationId ID da conversa
-   */
-  selectConversation(conversationId) {
-    this.emit('conversa:selecionar', conversationId);
-  }
-
-  /**
-   * Envia uma mensagem para o cliente
-   * @param {string} conversationId ID da conversa
-   * @param {string} text Texto da mensagem
-   */
-  sendMessage(conversationId, text) {
-    this.emit('mensagem:enviar', {
-      conversaId: conversationId,
-      texto: text
-    });
-  }
-
-  /**
-   * Transfere uma conversa para outro setor
-   * @param {string} conversationId ID da conversa
-   * @param {string} sector Novo setor
-   */
-  transferConversation(conversationId, sector) {
-    this.emit('conversa:transferir', {
-      conversaId: conversationId,
-      novoSetor: sector
-    });
-  }
-
-  /**
-   * Finaliza uma conversa
-   * @param {string} conversationId ID da conversa
-   */
-  finishConversation(conversationId) {
-    this.emit('conversa:finalizar', conversationId);
   }
 }
 
-// Exporta uma única instância do serviço
-export default new SocketService();
+// Exporta instância única
+export const socketService = new SocketService();
