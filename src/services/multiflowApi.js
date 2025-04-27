@@ -12,12 +12,13 @@ class MultiflowApiService {
         'Content-Type': 'application/json',
         [AUTH_HEADER]: API_TOKEN
       },
-      timeout: 10000 // 10 segundos
+      timeout: 15000 // Aumentado para 15 segundos para permitir mais tempo para a API responder
     });
     
     // Cache para armazenar respostas
     this.cache = {};
     this.setoresCache = null;
+    this.allConversasCache = []; // Cache global para todas as conversas
   }
 
   /**
@@ -225,29 +226,59 @@ class MultiflowApiService {
       }
       
       params.page = filters.page || 1;
-      params.limit = filters.limit || 20;
+      params.limit = filters.limit || 50; // Aumentado para 50 para mostrar mais conversas
       
-      // Cache key baseado nos filtros
-      const cacheKey = `conversas-${userId}-${JSON.stringify(params)}`;
-      
-      // Para garantir que temos sempre os dados mais atualizados, não usaremos cache por enquanto
-      // if (this.cache[cacheKey] && Date.now() - this.cache[cacheKey].timestamp < 30000) {
-      //   console.log('Usando cache de conversas');
-      //   return this.cache[cacheKey].data;
-      // }
-      
+      // Não usar cache para obter sempre dados atualizados      
       const response = await this.api.get(API_ENDPOINTS.getConversas(userId), { params });
       
-      // Armazenar em cache
-      this.cache[cacheKey] = {
-        data: response.data,
-        timestamp: Date.now()
-      };
+      // Se não encontrar conversas com o filtro especificado, mas tiver cache global, usar ele
+      if (response.data.success && (!response.data.data || response.data.data.length === 0)) {
+        if (this.allConversasCache.length > 0) {
+          console.log(`Usando cache global de conversas (${this.allConversasCache.length} conversas)`);
+          
+          // Se tiver filtros específicos, aplicá-los ao cache
+          if (filters.setorId) {
+            const filteredCache = this.allConversasCache.filter(conv => {
+              const convSetorId = conv.setorId?._id || conv.setorId;
+              return convSetorId === filters.setorId;
+            });
+            
+            response.data.data = filteredCache;
+          } else {
+            response.data.data = this.allConversasCache;
+          }
+        }
+      } else if (response.data.success && Array.isArray(response.data.data) && response.data.data.length > 0) {
+        // Atualizar o cache global com dados novos, se não estiver filtrando por setor
+        if (!filters.setorId) {
+          this.allConversasCache = response.data.data;
+        } else {
+          // Se estiver filtrando por setor, adicionar ao cache global apenas se não existirem
+          response.data.data.forEach(conv => {
+            const existingIndex = this.allConversasCache.findIndex(c => c._id === conv._id);
+            if (existingIndex >= 0) {
+              this.allConversasCache[existingIndex] = conv;
+            } else {
+              this.allConversasCache.push(conv);
+            }
+          });
+        }
+      }
       
       console.log(`Conversas obtidas com sucesso: ${response.data.data?.length || 0} conversas`);
       return response.data;
     } catch (error) {
       console.error('Erro ao buscar conversas:', error.message);
+      
+      // Se tiver cache global e ocorrer erro, retornar o cache como fallback
+      if (this.allConversasCache.length > 0) {
+        console.log(`Usando cache global como fallback (${this.allConversasCache.length} conversas)`);
+        return {
+          success: true,
+          error: error.message,
+          data: this.allConversasCache
+        };
+      }
       
       return {
         success: false,
@@ -264,27 +295,24 @@ class MultiflowApiService {
     try {
       console.log(`Buscando detalhes da conversa ${conversaId} para o usuário: ${userId}`);
       
-      // Cache key para esta conversa específica
-      const cacheKey = `conversa-${userId}-${conversaId}`;
-      
-      // Não usaremos cache para recuperar a conversa, para garantir dados atualizados
-      // if (this.cache[cacheKey] && Date.now() - this.cache[cacheKey].timestamp < 10000) {
-      //   console.log('Usando cache de conversa');
-      //   return this.cache[cacheKey].data;
-      // }
-      
+      // Não usar cache para detalhes da conversa, para garantir dados atualizados
       const response = await this.api.get(API_ENDPOINTS.getConversa(userId, conversaId));
-      
-      // Armazenar em cache
-      this.cache[cacheKey] = {
-        data: response.data,
-        timestamp: Date.now()
-      };
       
       console.log(`Detalhes da conversa obtidos com sucesso: ${conversaId}`);
       return response.data;
     } catch (error) {
       console.error(`Erro ao buscar detalhes da conversa ${conversaId}:`, error.message);
+      
+      // Tentar encontrar a conversa no cache global
+      const cachedConversation = this.allConversasCache.find(conv => conv._id === conversaId);
+      if (cachedConversation) {
+        console.log(`Usando conversa do cache global como fallback para ${conversaId}`);
+        return {
+          success: true,
+          error: error.message,
+          data: cachedConversation
+        };
+      }
       
       return {
         success: false,
@@ -312,6 +340,15 @@ class MultiflowApiService {
       );
       
       cacheKeysToInvalidate.forEach(key => delete this.cache[key]);
+      
+      // Atualizar a conversa no cache global
+      const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
+      if (conversationIndex >= 0 && response.data.success && response.data.data) {
+        this.allConversasCache[conversationIndex] = {
+          ...this.allConversasCache[conversationIndex],
+          ...response.data.data
+        };
+      }
       
       console.log('Mensagem enviada com sucesso');
       return response.data;
@@ -344,6 +381,12 @@ class MultiflowApiService {
       
       cacheKeysToInvalidate.forEach(key => delete this.cache[key]);
       
+      // Atualizar a conversa no cache global
+      const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
+      if (conversationIndex >= 0) {
+        this.allConversasCache[conversationIndex].status = status;
+      }
+      
       console.log(`Status da conversa atualizado com sucesso: ${status}`);
       return response.data;
     } catch (error) {
@@ -375,6 +418,15 @@ class MultiflowApiService {
       
       cacheKeysToInvalidate.forEach(key => delete this.cache[key]);
       
+      // Atualizar a conversa no cache global
+      const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
+      if (conversationIndex >= 0 && response.data.success && response.data.data) {
+        this.allConversasCache[conversationIndex] = {
+          ...this.allConversasCache[conversationIndex],
+          setorId: setorId
+        };
+      }
+      
       console.log('Conversa transferida com sucesso');
       return response.data;
     } catch (error) {
@@ -385,6 +437,15 @@ class MultiflowApiService {
         error: error.message
       };
     }
+  }
+
+  /**
+   * Limpa o cache e força a atualização dos dados
+   */
+  resetCache() {
+    console.log('Limpando todo o cache da API');
+    this.cache = {};
+    this.setoresCache = null;
   }
 
   /**

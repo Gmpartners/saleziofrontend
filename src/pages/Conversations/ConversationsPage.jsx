@@ -117,7 +117,8 @@ const ConversationsPage = () => {
     // Função de carregamento
     const loadConversations = async () => {
       try {
-        const success = await refreshConversations();
+        // MODIFICAÇÃO: Não usar nenhum filtro adicional, exibir todas as conversas
+        const success = await refreshConversations({});
         if (!success) {
           setLoadingError('Não foi possível carregar as conversas. O servidor pode estar indisponível.');
         }
@@ -207,7 +208,8 @@ const ConversationsPage = () => {
   const handleRefresh = async () => {
     setIsLoading(true);
     try {
-      await refreshConversations();
+      // MODIFICAÇÃO: Não usar nenhum filtro adicional, exibir todas as conversas
+      await refreshConversations({});
     } catch (error) {
       console.error('Erro ao atualizar conversas:', error);
     } finally {
@@ -378,7 +380,7 @@ const ListaConversas = ({
   const getSectorName = (sectorId) => {
     if (!sectorId || !sectors || !sectors.length) return '';
     const sector = sectors.find(s => s.id === sectorId || s._id === sectorId);
-    return sector ? sector.nome : '';
+    return sector ? sector.nome : 'Outro Setor';  // MODIFICAÇÃO: Retornar "Outro Setor" se não encontrado
   };
   
   return (
@@ -422,6 +424,11 @@ const ListaConversas = ({
             sectorLabel = getSectorName(setorIdValue) || "Setor";
           }
           
+          // Verificar se a conversa pertence ao setor do usuário
+          const userSectorId = userSector?._id || userSector?.id;
+          const conversationSectorId = conversation.setorId?._id || conversation.setorId;
+          const isUserSector = userSectorId === conversationSectorId;
+          
           // Determinar o status da conversa
           let statusLabel = "Em Andamento";
           let statusColor = "bg-green-600 hover:bg-green-700";
@@ -444,11 +451,18 @@ const ListaConversas = ({
               className="cursor-pointer"
               onClick={() => onSelectConversation(conversation._id || conversation.id)}
             >
-              <div className="p-4 rounded-xl bg-[#1e1d2b]/60 backdrop-blur-sm border border-[#32304a]/40 hover:bg-[#2a2942]/60 hover:border-[#32304a]/70 transition-all duration-200 shadow-sm hover:shadow-md">
+              <div className={`p-4 rounded-xl backdrop-blur-sm border transition-all duration-200 shadow-sm hover:shadow-md
+                ${isUserSector 
+                  ? "bg-[#1e1d2b]/60 border-[#32304a]/40 hover:bg-[#2a2942]/60 hover:border-[#32304a]/70" 
+                  : "bg-[#2a1e2d]/60 border-[#4a324a]/40 hover:bg-[#3a2a3d]/60 hover:border-[#4a324a]/70"}`}>
                 <div className="flex items-center gap-3">
-                  <Avatar className="h-10 w-10 bg-green-600/20 border border-green-500/40">
+                  <Avatar className={`h-10 w-10 ${isUserSector 
+                    ? "bg-green-600/20 border border-green-500/40" 
+                    : "bg-purple-600/20 border border-purple-500/40"}`}>
                     <AvatarImage src={conversation.cliente?.avatar} />
-                    <AvatarFallback className="bg-gradient-to-br from-green-600 to-green-500 text-white">
+                    <AvatarFallback className={`${isUserSector 
+                      ? "bg-gradient-to-br from-green-600 to-green-500" 
+                      : "bg-gradient-to-br from-purple-600 to-purple-500"} text-white`}>
                       {clienteName.charAt(0) || 'C'}
                     </AvatarFallback>
                   </Avatar>
@@ -477,8 +491,10 @@ const ListaConversas = ({
                         {statusLabel}
                       </Badge>
                       
-                      {/* Setor designado */}
-                      <span className="px-2 py-1 text-xs text-blue-300 bg-blue-900/30 rounded-md">
+                      {/* Setor designado - Diferente cor para o setor do usuário */}
+                      <span className={`px-2 py-1 text-xs rounded-md ${isUserSector 
+                        ? "text-blue-300 bg-blue-900/30" 
+                        : "text-purple-300 bg-purple-900/30"}`}>
                         {sectorLabel}
                       </span>
                     </div>

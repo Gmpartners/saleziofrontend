@@ -273,14 +273,16 @@ export const SocketProvider = ({ children }) => {
         limit: 20
       };
       
-      // Se o usuário tem um setor e não é admin, filtrar por setor
-      if (userProfile?.setor && userProfile.role !== 'admin') {
-        defaultFilters.setorId = userProfile.setor._id || userProfile.setor.id;
-      }
+      // MODIFICAÇÃO: Não filtrar automaticamente pelo setor, mostrar todas as conversas
+      // Apenas adicionar o setorId nos filtros se for explicitamente solicitado
+      // if (userProfile?.setor && userProfile.role !== 'admin') {
+      //   defaultFilters.setorId = userProfile.setor._id || userProfile.setor.id;
+      // }
       
       // Mesclar filtros padrão com filtros fornecidos
       const mergedFilters = { ...defaultFilters, ...filters };
       
+      console.log("Buscando conversas com filtros:", mergedFilters);
       const response = await multiflowApi.getConversas(mergedFilters);
       
       if (response.success && Array.isArray(response.data)) {
@@ -288,6 +290,10 @@ export const SocketProvider = ({ children }) => {
         setConversations(response.data);
       } else {
         console.warn('Falha ao buscar conversas:', response);
+        // Mesmo sem sucesso, tente manter as conversas já carregadas
+        if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+          setConversations(response.data);
+        }
       }
       
       return response.success;
