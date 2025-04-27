@@ -287,6 +287,7 @@ const ConversationsPage = () => {
             isLoading={isLoading}
             error={loadingError}
             sectors={sectors || []}
+            userSector={userSector} // Passando o userSector como prop
           />
         </TabsContent>
         
@@ -298,6 +299,7 @@ const ConversationsPage = () => {
             isLoading={isLoading}
             error={loadingError}
             sectors={sectors || []}
+            userSector={userSector} // Passando o userSector como prop
           />
         </TabsContent>
         
@@ -309,6 +311,7 @@ const ConversationsPage = () => {
             isLoading={isLoading}
             error={loadingError}
             sectors={sectors || []}
+            userSector={userSector} // Passando o userSector como prop
           />
         </TabsContent>
       </Tabs>
@@ -323,7 +326,8 @@ const ListaConversas = ({
   formatLastMessageTime,
   isLoading,
   error,
-  sectors
+  sectors,
+  userSector // Recebendo userSector como prop
 }) => {
   if (error) {
     return (
@@ -420,14 +424,23 @@ const ListaConversas = ({
           } else if (conversation.sectorName) {
             sectorLabel = conversation.sectorName;
           } else if (conversation.setorId) {
-            const setorIdValue = conversation.setorId._id || conversation.setorId;
+            // Verifica se setorId é um objeto ou um ID simples
+            const setorIdValue = typeof conversation.setorId === 'object' && conversation.setorId !== null
+              ? conversation.setorId._id || conversation.setorId.id
+              : conversation.setorId;
             sectorLabel = getSectorName(setorIdValue) || "Setor";
           }
           
           // Verificar se a conversa pertence ao setor do usuário
-          const userSectorId = userSector?._id || userSector?.id;
-          const conversationSectorId = conversation.setorId?._id || conversation.setorId;
-          const isUserSector = userSectorId === conversationSectorId;
+          // Extrair os IDs com tratamento seguro para evitar erros
+          const userSectorId = userSector?._id || userSector?.id || '';
+          
+          // Verificar se setorId é objeto ou string
+          const conversationSectorId = typeof conversation.setorId === 'object' && conversation.setorId !== null
+            ? conversation.setorId._id || conversation.setorId.id
+            : conversation.setorId || '';
+            
+          const isUserSector = userSectorId && conversationSectorId && userSectorId === conversationSectorId;
           
           // Determinar o status da conversa
           let statusLabel = "Em Andamento";
