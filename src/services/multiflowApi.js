@@ -400,6 +400,72 @@ class MultiflowApiService {
   }
 
   /**
+   * Finaliza uma conversa
+   */
+  async finalizarConversa(conversaId, userId = this.getUserId()) {
+    try {
+      console.log(`Finalizando conversa ${conversaId} para usuário ${userId}`);
+      
+      const response = await this.api.put(
+        API_ENDPOINTS.finalizarConversa(userId, conversaId)
+      );
+      
+      // Invalidar cache relacionado a esta conversa
+      const cacheKeysToInvalidate = Object.keys(this.cache).filter(key => 
+        key.includes(`conversa-${userId}-${conversaId}`) || key.includes(`conversas-${userId}`)
+      );
+      
+      cacheKeysToInvalidate.forEach(key => delete this.cache[key]);
+      
+      // Remover a conversa do cache global
+      this.allConversasCache = this.allConversasCache.filter(conv => conv._id !== conversaId);
+      
+      console.log(`Conversa finalizada com sucesso: ${conversaId}`);
+      return response.data;
+    } catch (error) {
+      console.error(`Erro ao finalizar conversa ${conversaId}:`, error.message);
+      
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Arquiva uma conversa
+   */
+  async arquivarConversa(conversaId, userId = this.getUserId()) {
+    try {
+      console.log(`Arquivando conversa ${conversaId} para usuário ${userId}`);
+      
+      const response = await this.api.put(
+        API_ENDPOINTS.arquivarConversa(userId, conversaId)
+      );
+      
+      // Invalidar cache relacionado a esta conversa
+      const cacheKeysToInvalidate = Object.keys(this.cache).filter(key => 
+        key.includes(`conversa-${userId}-${conversaId}`) || key.includes(`conversas-${userId}`)
+      );
+      
+      cacheKeysToInvalidate.forEach(key => delete this.cache[key]);
+      
+      // Remover a conversa do cache global
+      this.allConversasCache = this.allConversasCache.filter(conv => conv._id !== conversaId);
+      
+      console.log(`Conversa arquivada com sucesso: ${conversaId}`);
+      return response.data;
+    } catch (error) {
+      console.error(`Erro ao arquivar conversa ${conversaId}:`, error.message);
+      
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
    * Transfere uma conversa para outro setor
    */
   async transferirConversa(conversaId, setorId, userId = this.getUserId()) {

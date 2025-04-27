@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { socketService } from '../services/socket';
 import { multiflowApi } from '../services/multiflowApi';
 import { useAuthContext } from '../hooks/useAuthContext';
+import { API_ENDPOINTS } from '../config/syncConfig';
 
 // Mapeamento de eventos da API MultiFlow
 export const MultiFlowEventosMap = {
@@ -263,6 +264,72 @@ export const SocketProvider = ({ children }) => {
     }
   }, []);
 
+  // Finalizar conversa
+  const finishConversation = useCallback(async (conversationId) => {
+    try {
+      console.log(`Finalizando conversa ${conversationId}`);
+      
+      // Usar a implementação no serviço multiflowApi
+      const response = await multiflowApi.finalizarConversa(conversationId);
+      
+      // Se a finalização foi bem-sucedida
+      if (response && response.success) {
+        console.log('Conversa finalizada com sucesso');
+        
+        // Limpar a seleção se a conversa finalizada era a selecionada
+        if (selectedConversationIdRef.current === conversationId) {
+          setSelectedConversation(null);
+        }
+        
+        // Atualizar a lista de conversas, removendo a finalizada
+        setConversations(prev => 
+          prev.filter(conv => conv._id !== conversationId)
+        );
+        
+        return true;
+      } else {
+        console.error('Erro ao finalizar conversa:', response);
+        return false;
+      }
+    } catch (error) {
+      console.error(`Erro ao finalizar conversa ${conversationId}:`, error);
+      return false;
+    }
+  }, []);
+
+  // Arquivar conversa
+  const archiveConversation = useCallback(async (conversationId) => {
+    try {
+      console.log(`Arquivando conversa ${conversationId}`);
+      
+      // Usar a implementação no serviço multiflowApi
+      const response = await multiflowApi.arquivarConversa(conversationId);
+      
+      // Se o arquivamento foi bem-sucedido
+      if (response && response.success) {
+        console.log('Conversa arquivada com sucesso');
+        
+        // Limpar a seleção se a conversa arquivada era a selecionada
+        if (selectedConversationIdRef.current === conversationId) {
+          setSelectedConversation(null);
+        }
+        
+        // Atualizar a lista de conversas, removendo a arquivada
+        setConversations(prev => 
+          prev.filter(conv => conv._id !== conversationId)
+        );
+        
+        return true;
+      } else {
+        console.error('Erro ao arquivar conversa:', response);
+        return false;
+      }
+    } catch (error) {
+      console.error(`Erro ao arquivar conversa ${conversationId}:`, error);
+      return false;
+    }
+  }, []);
+
   // Atualizar lista de conversas
   const refreshConversations = useCallback(async (filters = {}) => {
     try {
@@ -312,6 +379,8 @@ export const SocketProvider = ({ children }) => {
     selectConversation,
     sendMessage,
     transferConversation,
+    finishConversation,   // Adicionando a função ao contexto
+    archiveConversation,  // Adicionando a função ao contexto
     refreshConversations,
     // Referências para a API e serviço de socket
     api: multiflowApi,
