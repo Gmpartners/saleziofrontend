@@ -126,12 +126,15 @@ export const SocketProvider = ({ children }) => {
     return () => clearInterval(intervalId);
   }, [isConnected, triggerRefresh]);
 
-  // Configurar conexão e listeners do WebSocket
+  // Configurar conexão e listeners do WebSocket - APENAS UMA VEZ!
   useEffect(() => {
     if (!user || !userProfile) return;
     
     // Se já foi inicializado, evitar reinicialização
-    if (isInitializedRef.current) return;
+    if (isInitializedRef.current) {
+      console.log('SocketContext já está inicializado. Ignorando.');
+      return;
+    }
     
     isInitializedRef.current = true;
     console.log('Inicializando SocketContext...');
@@ -364,12 +367,13 @@ export const SocketProvider = ({ children }) => {
       // Verificar conexão e atualizar estado
       setIsConnected(socketService.isConnected());
       
-      // Carregar lista inicial de conversas (apenas na primeira vez)
+      // Carregar lista inicial de conversas
       shouldRefreshRef.current = true;
       triggerRefresh();
       
       // Limpar ao desmontar
       return () => {
+        console.log('Desmontando SocketContext, limpando listeners e desconectando socket');
         removeListeners.forEach(removeListener => {
           if (typeof removeListener === 'function') {
             removeListener();
@@ -393,13 +397,13 @@ export const SocketProvider = ({ children }) => {
       shouldRefreshRef.current = true;
       triggerRefresh();
       
+      // Limpar ao desmontar mesmo em caso de erro
       return () => {
-        // Garantir que o socket seja desconectado se houver erro
         socketService.disconnect();
         isInitializedRef.current = false;
       };
     }
-  }, [user, userProfile, socketURL, conversations.length, triggerRefresh]);
+  }, [user, userProfile, socketURL, triggerRefresh]);
 
   // Atualizar a referência quando a conversa selecionada mudar
   useEffect(() => {
@@ -410,13 +414,18 @@ export const SocketProvider = ({ children }) => {
     }
   }, [selectedConversation]);
 
-  // Selecionar uma conversa
+  // Selecionar uma conversa com memoização para evitar reconexões desnecessárias
   const selectConversation = useCallback(async (conversationId) => {
+    // Evitar reconexões da mesma conversa
+    if (selectedConversationIdRef.current === conversationId && selectedConversation) {
+      console.log(`Conversa ${conversationId} já está selecionada. Retornando dados em cache.`);
+      return selectedConversation;
+    }
+    
     try {
       console.log(`Selecionando conversa: ${conversationId}`);
       
       // Se já tivermos a conversa em cache e ela tiver mensagens, usar cache temporariamente
-      // enquanto buscamos dados atualizados em segundo plano
       const cachedConversation = conversations.find(conv => conv._id === conversationId) || 
                                 completedConversations.find(conv => conv._id === conversationId);
       
@@ -445,7 +454,7 @@ export const SocketProvider = ({ children }) => {
       );
       
       if (response.data && response.data.success && response.data.data) {
-        console.log('Detalhes da conversa recebidos do servidor:', response.data.data);
+        console.log('Detalhes da conversa recebidos do servidor');
         
         // Garantir que a conversa tem um array de mensagens
         const updatedConversation = {
@@ -505,16 +514,19 @@ export const SocketProvider = ({ children }) => {
              completedConversations.find(conv => conv._id === conversationId) || 
              null;
     }
-  }, [user, userProfile, conversations, completedConversations]);
+  }, [user, userProfile, conversations, completedConversations, selectedConversation]);
 
-  // Enviar mensagem em uma conversa
+  // Enviar mensagem em uma conversa com tratamento otimizado para atualização em tempo real
   const sendMessage = useCallback(async (conversationId, text) => {
     try {
       console.log(`Enviando mensagem para conversa ${conversationId}:`, text);
       
+      // Criar id único para mensagem otimista
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
       // Otimista: adicionar mensagem localmente antes da confirmação do servidor
       const optimisticMessage = {
-        _id: `temp-${Date.now()}`,
+        _id: tempId,
         conversaId: conversationId,
         conteudo: text,
         remetente: 'atendente',
@@ -529,7 +541,7 @@ export const SocketProvider = ({ children }) => {
           if (!prev) return null;
           
           const updatedMessages = [...(prev.mensagens || []), optimisticMessage];
-          console.log('Atualizando mensagens da conversa selecionada', updatedMessages);
+          console.log('Atualizando mensagens da conversa selecionada', updatedMessages.length);
           
           return {
             ...prev,
@@ -571,7 +583,7 @@ export const SocketProvider = ({ children }) => {
             
             // Atualizar mensagem com ID real
             const updatedMessages = prev.mensagens.map(msg => 
-              msg._id === optimisticMessage._id ? 
+              msg._id === tempId ? 
                 { 
                   ...msg, 
                   _id: response.data?.mensagemId || msg._id, 
@@ -602,7 +614,7 @@ export const SocketProvider = ({ children }) => {
             return {
               ...prev,
               mensagens: prev.mensagens.map(msg => 
-                msg._id === optimisticMessage._id ? 
+                msg._id === tempId ? 
                   { ...msg, status: 'failed' } : 
                   msg
               )
@@ -792,7 +804,7 @@ export const SocketProvider = ({ children }) => {
     }
   }, []);
 
-  // Atualizar lista de conversas
+  // Atualizar lista de conversas com debounce integrado
   const refreshConversations = useCallback(async (filters = {}) => {
     // Evitar atualizações desnecessárias
     if (isRefreshingRef.current) {

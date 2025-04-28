@@ -1,5 +1,5 @@
 // pages/Conversations/ConversationDetail.jsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Send, ArrowLeft, UserCircle, MoreVertical, CheckCheck, Clock, AlertCircle } from 'lucide-react';
 import { useSocket } from '../../contexts/SocketContext';
@@ -15,21 +15,30 @@ const ConversationDetail = () => {
     selectConversation, 
     sendMessage,
     retryFailedMessage,
-    isConnected
+    isConnected,
+    refreshConversations
   } = useSocket();
   
   const [newMessage, setNewMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [typingTimeout, setTypingTimeout] = useState(null);
+  const [previousId, setPreviousId] = useState(null);
   
   const messagesEndRef = useRef(null);
   const messageListRef = useRef(null);
   const inputRef = useRef(null);
+  const selectionCompleteRef = useRef(false);
 
-  // Selecionar a conversa quando o componente for montado
+  // Selecionar a conversa quando o componente for montado ou quando o ID mudar
   useEffect(() => {
-    if (id) {
-      selectConversation(id);
+    // Evitar seleções repetidas da mesma conversa
+    if (id && id !== previousId) {
+      console.log(`Selecionando conversa (ID alterado): ${id}`);
+      setPreviousId(id);
+      selectionCompleteRef.current = false;
+      selectConversation(id).then(() => {
+        selectionCompleteRef.current = true;
+      });
     }
     
     // Função de limpeza para evitar memory leaks
@@ -41,16 +50,23 @@ const ConversationDetail = () => {
     };
   }, [id, selectConversation]);
 
-  // Rolar para a última mensagem quando a conversa for carregada
-  useEffect(() => {
+  // Rolar para a última mensagem quando novas mensagens chegarem
+  const scrollToBottom = useCallback(() => {
     if (messagesEndRef.current && messageListRef.current) {
-      messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [selectedConversation?.mensagens]);
+  }, []);
+
+  // Efeito para rolagem quando novas mensagens chegarem
+  useEffect(() => {
+    if (selectedConversation?.mensagens?.length > 0) {
+      scrollToBottom();
+    }
+  }, [selectedConversation?.mensagens, scrollToBottom]);
 
   // Focar no input quando a conversa carregar
   useEffect(() => {
-    if (inputRef.current && selectedConversation) {
+    if (inputRef.current && selectedConversation && selectionCompleteRef.current) {
       inputRef.current.focus();
     }
   }, [selectedConversation]);
@@ -60,29 +76,60 @@ const ConversationDetail = () => {
     navigate('/conversations');
   };
 
-  // Enviar mensagem
+  // Refresh periódico para garantir a sincronização das mensagens
+  useEffect(() => {
+    // Verificar se há novas mensagens a cada 10 segundos, apenas se a conversa estiver selecionada
+    let intervalId;
+    if (id && isConnected && selectionCompleteRef.current) {
+      intervalId = setInterval(() => {
+        // Silenciosamente recarregar a conversa sem atualizar toda a lista
+        selectConversation(id);
+      }, 10000); // 10 segundos
+    }
+    
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [id, isConnected, selectConversation, selectionCompleteRef.current]);
+
+  // Enviar mensagem com tratamento otimizado
   const handleSendMessage = async (e) => {
     e.preventDefault();
     
     if (!newMessage.trim() || !id) return;
     
-    // Limpar o input antes de enviar para melhorar a UX
+    // Armazenar a mensagem antes de limpar o input para melhorar a UX
+    const messageText = newMessage.trim();
+    
+    // Limpar o input antes de enviar
     setNewMessage('');
     
-    // Enviar a mensagem usando o contexto
-    await sendMessage(id, newMessage.trim());
-    
-    // Focar no input novamente
-    if (inputRef.current) {
-      inputRef.current.focus();
+    try {
+      // Enviar a mensagem usando o contexto
+      await sendMessage(id, messageText);
+      
+      // Rolar para o final após enviar
+      setTimeout(scrollToBottom, 100);
+      
+    } catch (error) {
+      console.error("Erro ao enviar mensagem:", error);
+      // Restaurar mensagem em caso de erro
+      setNewMessage(messageText);
+    } finally {
+      // Focar no input novamente
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
     }
   };
 
-  // Lidar com digitação
+  // Lidar com digitação com debounce para evitar muitas atualizações
   const handleTyping = (e) => {
     setNewMessage(e.target.value);
     
-    // Simular evento de "digitando..."
+    // Simular evento de "digitando..." com debounce
     setIsTyping(true);
     
     // Limpar timeout anterior se existir
@@ -98,16 +145,16 @@ const ConversationDetail = () => {
     setTypingTimeout(timeout);
   };
 
-  // Componente para mensagem
-  const MessageBubble = ({ message }) => {
+  // Tentar novamente enviar mensagem com falha
+  const handleRetryMessage = (messageId, content) => {
+    if (!id) return;
+    retryFailedMessage(id, messageId, content);
+    setTimeout(scrollToBottom, 100);
+  };
+
+  // Componente para mensagem com memoização para evitar re-renders desnecessários
+  const MessageBubble = React.memo(({ message }) => {
     const isAtendente = message.remetente === 'atendente';
-    
-    // Tentar novamente enviar mensagem com falha
-    const handleRetry = () => {
-      if (message.status === 'failed' && message._id && message.conteudo) {
-        retryFailedMessage(id, message._id, message.conteudo);
-      }
-    };
     
     return (
       <motion.div
@@ -133,7 +180,7 @@ const ConversationDetail = () => {
           {/* Botão de tentar novamente para mensagens com falha */}
           {message.status === 'failed' && (
             <button 
-              onClick={handleRetry}
+              onClick={() => handleRetryMessage(message._id, message.conteudo)}
               className="ml-2 text-red-400 hover:text-red-300 underline text-xs"
             >
               Tentar novamente
@@ -142,7 +189,7 @@ const ConversationDetail = () => {
         </div>
       </motion.div>
     );
-  };
+  });
 
   // Renderizar estado de carregamento
   if (!selectedConversation) {
@@ -174,15 +221,32 @@ const ConversationDetail = () => {
   return (
     <div className="h-screen flex flex-col p-4 lg:p-6">
       {/* Cabeçalho da página */}
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleBack}
+            className="flex items-center justify-center h-8 w-8 rounded-full bg-[#0f1621] text-slate-400 hover:text-white"
+            aria-label="Voltar"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <h1 className="text-xl font-bold text-white">Detalhes da Conversa</h1>
+        </div>
+        
+        {/* Botão de atualizar explícito */}
         <button
-          onClick={handleBack}
+          onClick={() => selectConversation(id)}
           className="flex items-center justify-center h-8 w-8 rounded-full bg-[#0f1621] text-slate-400 hover:text-white"
-          aria-label="Voltar"
+          aria-label="Atualizar conversa"
+          title="Atualizar conversa"
         >
-          <ArrowLeft className="h-5 w-5" />
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+            <path d="M21 3v5h-5" />
+            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+            <path d="M8 16H3v5" />
+          </svg>
         </button>
-        <h1 className="text-xl font-bold text-white">Detalhes da Conversa</h1>
       </div>
       
       {/* Interface do chat */}
@@ -220,7 +284,7 @@ const ConversationDetail = () => {
         
         {/* Lista de mensagens */}
         <div 
-          className="flex-1 overflow-y-auto p-4"
+          className="flex-1 overflow-y-auto p-4 custom-scrollbar"
           ref={messageListRef}
         >
           <AnimatePresence>
