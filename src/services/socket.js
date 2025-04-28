@@ -15,6 +15,8 @@ class SocketService {
     this.maxReconnectAttempts = 5;
     this.listeners = {};
     this.debug = true; // Facilita debug em desenvolvimento
+    this.eventListeners = {}; // Armazenar listeners por evento para controle mais fino
+    this.lastEventTimestamps = {}; // Controlar timestamps de eventos para evitar duplicatas
   }
 
   /**
@@ -81,6 +83,27 @@ class SocketService {
     // Configurar listener de erro
     this.socket.io.on('error', (error) => {
       this.log('Erro no socket:', error);
+      this._notifyListeners('error', error);
+    });
+
+    // Configurar listener de conexão
+    this.socket.on('connect', () => {
+      this.log('Socket conectado');
+      this.connected = true;
+      this._notifyListeners('connect');
+    });
+
+    // Configurar listener de desconexão
+    this.socket.on('disconnect', (reason) => {
+      this.log('Socket desconectado:', reason);
+      this.connected = false;
+      this._notifyListeners('disconnect', reason);
+    });
+
+    // Adicionar log dedicado para novas mensagens
+    this.socket.on('nova_mensagem', (data) => {
+      console.log('💬 NOVA MENSAGEM RECEBIDA RAW:', data);
+      // O processamento continua pelo sistema normal de notificação
     });
 
     // Salvar estado conectado
@@ -121,6 +144,55 @@ class SocketService {
   }
 
   /**
+   * Envia evento aos listeners registrados com controle de taxa
+   * para evitar processamento de eventos duplicados
+   */
+  _notifyListeners(event, ...args) {
+    if (!this.eventListeners[event]) return;
+    
+    // Definir eventos críticos que não devem sofrer throttling
+    const criticalEvents = ['nova_mensagem', 'nova_conversa'];
+    
+    // Processar IMEDIATAMENTE eventos críticos, sem throttling ou delay
+    if (criticalEvents.includes(event)) {
+      this.log(`Notificando ${this.eventListeners[event].length} listeners para evento crítico: ${event}`);
+      
+      // Processar imediatamente, sem requestAnimationFrame
+      this.eventListeners[event].forEach(listener => {
+        try {
+          listener(...args);
+        } catch (error) {
+          console.error(`Erro ao processar evento crítico ${event}:`, error);
+        }
+      });
+      return;
+    }
+    
+    // Para eventos não críticos, aplicar throttling
+    const now = Date.now();
+    const minInterval = 100;
+    
+    if (now - (this.lastEventTimestamps[event] || 0) < minInterval) {
+      this.log(`Evento ${event} ignorado (muito frequente)`);
+      return;
+    }
+    
+    this.lastEventTimestamps[event] = now;
+    this.log(`Notificando ${this.eventListeners[event].length} listeners para evento: ${event}`);
+    
+    // Usar setTimeout com 0ms para garantir execução no próximo tick do event loop
+    setTimeout(() => {
+      this.eventListeners[event].forEach(listener => {
+        try {
+          listener(...args);
+        } catch (error) {
+          console.error(`Erro ao processar evento ${event}:`, error);
+        }
+      });
+    }, 0);
+  }
+
+  /**
    * Entra em uma sala
    */
   joinRoom(room) {
@@ -151,7 +223,7 @@ class SocketService {
   }
 
   /**
-   * Adiciona listener para um evento
+   * Adiciona listener para um evento com suporte a debounce
    */
   on(event, callback) {
     if (!this.socket) {
@@ -161,28 +233,30 @@ class SocketService {
 
     this.log(`Adicionando listener para evento: ${event}`);
     
-    // Manter controle dos listeners para cada evento
-    if (!this.listeners[event]) {
-      this.listeners[event] = [];
+    // Inicializar array de listeners para o evento se necessário
+    if (!this.eventListeners[event]) {
+      this.eventListeners[event] = [];
+      
+      // Configurar o event handler apenas uma vez por tipo de evento
+      this.socket.on(event, (...args) => {
+        this._notifyListeners(event, ...args);
+      });
     }
     
-    this.listeners[event].push(callback);
-    
-    // Adicionar listener ao socket
-    this.socket.on(event, (...args) => {
-      this.log(`Notificando ${this.listeners[event].length} listeners para evento: ${event}`);
-      this.listeners[event].forEach(listener => listener(...args));
-    });
+    // Adicionar o callback à lista de listeners para este evento
+    this.eventListeners[event].push(callback);
     
     // Retornar função para remover listener
     return () => {
       this.log(`Removendo listener para evento: ${event}`);
-      this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
-      
-      // Se não tiver mais listeners para este evento, remover do socket
-      if (this.listeners[event].length === 0) {
-        this.socket.off(event);
-        delete this.listeners[event];
+      if (this.eventListeners[event]) {
+        this.eventListeners[event] = this.eventListeners[event].filter(cb => cb !== callback);
+        
+        // Se não tiver mais listeners para este evento, remover do socket
+        if (this.eventListeners[event].length === 0) {
+          this.socket.off(event);
+          delete this.eventListeners[event];
+        }
       }
     };
   }
@@ -203,11 +277,17 @@ class SocketService {
     this.log('Desconectando socket');
     
     // Limpar listeners para evitar vazamentos de memória
-    Object.keys(this.listeners).forEach(event => {
-      this.socket.off(event);
-    });
+    if (this.socket.offAny) {
+      this.socket.offAny();
+    } else {
+      // Limpar cada evento individualmente como fallback
+      Object.keys(this.eventListeners).forEach(event => {
+        this.socket.off(event);
+      });
+    }
     
-    this.listeners = {};
+    this.eventListeners = {};
+    this.lastEventTimestamps = {};
     
     // Desconectar socket
     this.socket.disconnect();
@@ -231,11 +311,9 @@ class SocketService {
       }
     };
 
-    // Se tiver listeners para o evento nova_mensagem, notificar
-    if (this.listeners['nova_mensagem'] && this.listeners['nova_mensagem'].length > 0) {
-      this.listeners['nova_mensagem'].forEach(listener => listener(mockData));
-    }
-
+    console.log('💬 SIMULANDO NOVA MENSAGEM:', mockData);
+    // Notificar através do sistema padronizado
+    this._notifyListeners('nova_mensagem', mockData);
     return mockData;
   }
 }

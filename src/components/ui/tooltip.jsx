@@ -21,9 +21,14 @@ export const Tooltip = ({ children }) => {
   
   return (
     <div className="inline-block relative">
-      {React.Children.map(children, child => 
-        React.cloneElement(child, { tooltipId: id })
-      )}
+      {React.Children.map(children, child => {
+        // Verificar se o elemento filho é um elemento React válido
+        if (React.isValidElement(child)) {
+          return React.cloneElement(child, { tooltipId: id });
+        }
+        // Retornar o child como está se não for um elemento React válido
+        return child;
+      })}
     </div>
   );
 };

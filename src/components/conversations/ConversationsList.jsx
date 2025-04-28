@@ -1,541 +1,187 @@
-import { useState, useEffect } from 'react';
-import { Search, MessageSquareOff, Filter, X } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
-
-// Components
+import React, { useState, useEffect } from 'react';
+import { Search, Loader2, User, MessageSquare } from 'lucide-react';
 import ConversationItem from './ConversationItem';
-import { Input } from '../ui/input';
-import { Button } from '../ui/button';
-import { Badge } from '../ui/badge';
-import { Skeleton } from '../ui/skeleton';
+import { useSocket } from '../../contexts/SocketContext';
+import { useAuthContext } from '../../hooks/useAuthContext';
 
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
-
-const ConversationsList = ({
-  conversations = [],
-  isLoading = false,
-  error = null,
-  onSelectConversation,
-  onRefresh,
-  sectors = [],
-  userSector
+const ConversationsList = ({ 
+  onSelectConversation, 
+  selectedConversationId,
+  showSectorFilter = false
 }) => {
+  const { conversations, refreshConversations, completedConversations, refreshCompletedConversations, isLoading } = useSocket();
+  const { userProfile } = useAuthContext();
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeFilters, setActiveFilters] = useState({
-    status: [],
-    sector: []
-  });
-  const [filteredConversations, setFilteredConversations] = useState(conversations);
+  const [activeTab, setActiveTab] = useState('em_andamento'); // 'em_andamento', 'aguardando', 'finalizada'
+  const [selectedSector, setSelectedSector] = useState('all');
+  const [availableSectors, setAvailableSectors] = useState([]);
   
-  // Formatador de tempo
-  const formatLastMessageTime = (timestamp) => {
-    if (!timestamp) return '';
-    
-    try {
-      const date = new Date(timestamp);
-      const now = new Date();
-      const diffMs = now - date;
-      const diffMins = Math.floor(diffMs / (1000 * 60));
-      
-      if (diffMins < 1) return 'Agora';
-      if (diffMins < 60) return `${diffMins}m atrás`;
-      
-      const diffHours = Math.floor(diffMins / 60);
-      if (diffHours < 24) return `${diffHours}h atrás`;
-      
-      const day = date.getDate().toString().padStart(2, '0');
-      const month = (date.getMonth() + 1).toString().padStart(2, '0');
-      return `${day}/${month}`;
-    } catch (error) {
-      return '';
-    }
-  };
-  
-  // Aplicar filtros quando as conversas mudarem
+  // Extrair setores disponíveis das conversas
   useEffect(() => {
-    if (!conversations || !Array.isArray(conversations)) {
-      setFilteredConversations([]);
-      return;
+    if (conversations.length > 0) {
+      const sectors = new Set();
+      
+      // Adicionar setores das conversas ativas
+      conversations.forEach(conv => {
+        if (conv.setorId?.nome) {
+          sectors.add(conv.setorId.nome);
+        }
+      });
+      
+      // Adicionar setores das conversas concluídas
+      completedConversations.forEach(conv => {
+        if (conv.setorId?.nome) {
+          sectors.add(conv.setorId.nome);
+        }
+      });
+      
+      setAvailableSectors(Array.from(sectors).sort());
     }
+  }, [conversations, completedConversations]);
+
+  // Buscar conversas concluídas ao mudar para a aba correspondente
+  useEffect(() => {
+    if (activeTab === 'finalizada' && completedConversations.length === 0) {
+      refreshCompletedConversations();
+    }
+  }, [activeTab, completedConversations.length, refreshCompletedConversations]);
+
+  // Filtrar conversas com base na pesquisa, setor e status
+  const getFilteredConversations = () => {
+    const allConversations = activeTab === 'finalizada' ? completedConversations : conversations;
     
-    // Aplicar filtros e pesquisa
-    const filtered = conversations.filter(conv => {
-      // Verificar existência da conversa
-      if (!conv) return false;
+    return allConversations.filter(conv => {
+      // Filtrar por termo de pesquisa
+      const matchesSearch = 
+        !searchTerm || 
+        conv.nomeCliente?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        conv.telefoneCliente?.includes(searchTerm) ||
+        conv.ultimaMensagem?.toLowerCase().includes(searchTerm.toLowerCase());
       
-      // 1. Filtro de pesquisa
-      if (searchTerm) {
-        const searchLower = searchTerm.toLowerCase();
-        const nameMatch = (conv.nomeCliente || conv.cliente?.nome || '')
-          .toLowerCase().includes(searchLower);
-        const phoneMatch = (conv.telefoneCliente || conv.cliente?.telefone || '')
-          .includes(searchTerm);
-        const messageMatch = (conv.ultimaMensagem || '')
-          .toLowerCase().includes(searchLower);
-          
-        if (!nameMatch && !phoneMatch && !messageMatch) return false;
-      }
+      // Filtrar por setor
+      const matchesSector = 
+        selectedSector === 'all' || 
+        conv.setorId?.nome === selectedSector;
       
-      // 2. Filtro de status
-      if (activeFilters.status.length > 0) {
-        const status = (conv.status || '').toLowerCase();
-        if (!activeFilters.status.some(s => status.includes(s))) return false;
-      }
+      // Filtrar por status
+      const matchesStatus = activeTab === 'finalizada' 
+        ? conv.status?.toLowerCase() === 'finalizada'
+        : activeTab === 'aguardando'
+          ? conv.status?.toLowerCase() === 'aguardando'
+          : conv.status?.toLowerCase() === 'em_andamento';
       
-      // 3. Filtro de setor
-      if (activeFilters.sector.length > 0) {
-        const sectorId = typeof conv.setorId === 'object' 
-          ? conv.setorId?._id || conv.setorId?.id 
-          : conv.setorId;
-          
-        if (!activeFilters.sector.includes(sectorId)) return false;
-      }
-      
-      return true;
+      return matchesSearch && matchesSector && matchesStatus;
     });
+  };
+
+  // Conversas filtradas
+  const filteredConversations = getFilteredConversations();
+
+  // Manipulador de atualização manual
+  const handleRefresh = async () => {
+    if (isLoading) return;
     
-    setFilteredConversations(filtered);
-  }, [conversations, searchTerm, activeFilters]);
-  
-  // Toggle para filtros de status
-  const toggleStatusFilter = (status) => {
-    setActiveFilters(prev => {
-      const newStatus = prev.status.includes(status)
-        ? prev.status.filter(s => s !== status)
-        : [...prev.status, status];
-        
-      return {
-        ...prev,
-        status: newStatus
-      };
-    });
+    if (activeTab === 'finalizada') {
+      await refreshCompletedConversations();
+    } else {
+      await refreshConversations({
+        status: activeTab === 'aguardando' ? ['aguardando'] : ['em_andamento']
+      });
+    }
   };
-  
-  // Toggle para filtros de setor
-  const toggleSectorFilter = (sectorId) => {
-    setActiveFilters(prev => {
-      const newSector = prev.sector.includes(sectorId)
-        ? prev.sector.filter(id => id !== sectorId)
-        : [...prev.sector, sectorId];
-        
-      return {
-        ...prev,
-        sector: newSector
-      };
-    });
-  };
-  
-  // Limpar todos os filtros
-  const clearFilters = () => {
-    setActiveFilters({
-      status: [],
-      sector: []
-    });
-    setSearchTerm('');
-  };
-  
-  // Verificar se há filtros ativos
-  const hasActiveFilters = activeFilters.status.length > 0 || 
-    activeFilters.sector.length > 0 || 
-    searchTerm.length > 0;
-  
-  // Renderizar carregamento
-  if (isLoading) {
-    return (
-      <div className="space-y-3">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="p-4 rounded-lg bg-[#0f1621] border border-[#1f2937]/40 flex items-center gap-3">
-            <Skeleton className="h-10 w-10 rounded-full bg-[#1f2937]/40" />
-            <div className="flex-1">
-              <Skeleton className="h-4 w-40 mb-2 bg-[#1f2937]/60" />
-              <Skeleton className="h-3 w-full bg-[#1f2937]/40" />
-            </div>
-          </div>
-        ))}
+
+  return (
+    <div className="h-full flex flex-col bg-[#0a0f16]">
+      {/* Cabeçalho */}
+      <div className="p-4 bg-[#0f1621] border-b border-[#1f2937]/40 flex justify-between items-center">
+        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+          <MessageSquare className="h-5 w-5 text-[#10b981]" />
+          Conversas
+        </h2>
+        <span className="text-xs text-gray-400">
+          {filteredConversations.length} {activeTab === 'finalizada' ? 'finalizadas' : activeTab === 'aguardando' ? 'aguardando' : 'em andamento'}
+        </span>
       </div>
-    );
-  }
-  
-  // Renderizar erro
-  if (error) {
-    return (
-      <div className="p-6 rounded-lg bg-red-500/10 border border-red-500/30 text-center">
-        <h3 className="text-lg font-medium text-red-300 mb-2">Erro ao carregar conversas</h3>
-        <p className="text-sm text-slate-400 mb-4">{error}</p>
-        <Button 
-          onClick={onRefresh} 
-          variant="destructive"
-          className="bg-red-600 hover:bg-red-700"
-        >
-          Tentar novamente
-        </Button>
-      </div>
-    );
-  }
-  
-  // Renderizar conversas vazias
-  if (filteredConversations.length === 0) {
-    return (
-      <div className="h-full flex flex-col">
-        {/* Barra de pesquisa e filtros */}
-        <div className="mb-4 flex gap-2 items-center">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-500" />
-            <Input
-              type="text"
-              placeholder="Pesquisar conversas..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10 bg-[#0f1621] border-[#1f2937]/50 text-white"
-            />
-          </div>
-          
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button 
-                variant="outline" 
-                size="icon"
-                className="h-10 w-10 border-[#1f2937]/50 bg-[#0f1621] text-slate-400"
-              >
-                <Filter className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="bg-[#0f1621] border-[#1f2937]/50 text-slate-200">
-              <DropdownMenuLabel>Filtrar por</DropdownMenuLabel>
-              <DropdownMenuSeparator className="bg-[#1f2937]/30" />
-              
-              <div className="px-2 py-1.5">
-                <p className="text-xs font-medium mb-1.5 text-slate-400">Status</p>
-                <div className="flex flex-wrap gap-1">
-                  <Badge 
-                    className={`cursor-pointer ${
-                      activeFilters.status.includes('aguardando') 
-                        ? 'bg-amber-600' 
-                        : 'bg-[#1f2937]/40 hover:bg-[#1f2937]/60'
-                    }`}
-                    onClick={() => toggleStatusFilter('aguardando')}
-                  >
-                    Aguardando
-                  </Badge>
-                  <Badge 
-                    className={`cursor-pointer ${
-                      activeFilters.status.includes('andamento') 
-                        ? 'bg-[#10b981]' 
-                        : 'bg-[#1f2937]/40 hover:bg-[#1f2937]/60'
-                    }`}
-                    onClick={() => toggleStatusFilter('andamento')}
-                  >
-                    Em andamento
-                  </Badge>
-                  <Badge 
-                    className={`cursor-pointer ${
-                      activeFilters.status.includes('finalizado') 
-                        ? 'bg-blue-600' 
-                        : 'bg-[#1f2937]/40 hover:bg-[#1f2937]/60'
-                    }`}
-                    onClick={() => toggleStatusFilter('finalizado')}
-                  >
-                    Finalizado
-                  </Badge>
-                </div>
-              </div>
-              
-              {sectors && sectors.length > 0 && (
-                <div className="px-2 py-1.5">
-                  <p className="text-xs font-medium mb-1.5 text-slate-400">Setor</p>
-                  <div className="flex flex-wrap gap-1">
-                    {sectors.map(sector => (
-                      <Badge 
-                        key={sector._id || sector.id}
-                        className={`cursor-pointer ${
-                          activeFilters.sector.includes(sector._id || sector.id) 
-                            ? 'bg-[#10b981]' 
-                            : 'bg-[#1f2937]/40 hover:bg-[#1f2937]/60'
-                        }`}
-                        onClick={() => toggleSectorFilter(sector._id || sector.id)}
-                      >
-                        {sector.nome}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
-              <DropdownMenuSeparator className="bg-[#1f2937]/30" />
-              <DropdownMenuItem 
-                className="text-center justify-center text-slate-400 hover:text-white cursor-pointer hover:bg-[#101820]"
-                onClick={clearFilters}
-              >
-                Limpar filtros
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+
+      {/* Barra de pesquisa */}
+      <div className="px-3 py-3 border-b border-[#1f2937]/40">
+        <div className="relative">
+          <input
+            type="text"
+            placeholder="Buscar conversas..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-[#1a2435] border border-[#1f2937]/60 rounded-lg pl-10 pr-4 py-2 text-sm text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#10b981]/30"
+          />
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
         </div>
-        
-        {/* Chips de filtros ativos */}
-        {hasActiveFilters && (
-          <div className="flex flex-wrap gap-2 mb-4">
-            {searchTerm && (
-              <div className="flex items-center gap-1 text-xs bg-[#1f2937]/40 text-slate-300 px-2 py-1 rounded-full">
-                <span>"{searchTerm}"</span>
-                <button 
-                  onClick={() => setSearchTerm('')}
-                  className="ml-1 hover:text-white"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            )}
-            
-            {activeFilters.status.map(status => (
-              <div key={status} className="flex items-center gap-1 text-xs bg-[#1f2937]/40 text-slate-300 px-2 py-1 rounded-full">
-                <span>Status: {status}</span>
-                <button 
-                  onClick={() => toggleStatusFilter(status)}
-                  className="ml-1 hover:text-white"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-[#1f2937]/40">
+        <button
+          onClick={() => setActiveTab('em_andamento')}
+          className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'em_andamento'
+              ? 'text-[#10b981] border-[#10b981]'
+              : 'text-gray-400 border-transparent hover:text-gray-300'
+          }`}
+        >
+          Em Andamento
+        </button>
+        <button
+          onClick={() => setActiveTab('aguardando')}
+          className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'aguardando'
+              ? 'text-[#10b981] border-[#10b981]'
+              : 'text-gray-400 border-transparent hover:text-gray-300'
+          }`}
+        >
+          Aguardando
+        </button>
+        <button
+          onClick={() => setActiveTab('finalizada')}
+          className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'finalizada'
+              ? 'text-[#10b981] border-[#10b981]'
+              : 'text-gray-400 border-transparent hover:text-gray-300'
+          }`}
+        >
+          Finalizadas
+        </button>
+      </div>
+
+      {/* Lista de conversas */}
+      <div className="flex-1 overflow-y-auto">
+        {isLoading ? (
+          <div className="flex items-center justify-center h-16 text-gray-400 text-sm py-8">
+            <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+            <span>Carregando conversas...</span>
+          </div>
+        ) : filteredConversations.length > 0 ? (
+          <div className="divide-y divide-[#1f2937]/40">
+            {filteredConversations.map(conversation => (
+              <ConversationItem
+                key={conversation._id}
+                conversation={conversation}
+                isSelected={selectedConversationId === conversation._id}
+                onClick={() => onSelectConversation(conversation._id)}
+              />
             ))}
-            
-            {activeFilters.sector.map(sectorId => {
-              const sector = sectors.find(s => s._id === sectorId || s.id === sectorId);
-              return (
-                <div key={sectorId} className="flex items-center gap-1 text-xs bg-[#1f2937]/40 text-slate-300 px-2 py-1 rounded-full">
-                  <span>Setor: {sector?.nome || sectorId}</span>
-                  <button 
-                    onClick={() => toggleSectorFilter(sectorId)}
-                    className="ml-1 hover:text-white"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              );
-            })}
-            
-            <button 
-              onClick={clearFilters}
-              className="text-xs bg-[#10b981]/20 text-[#10b981] px-2 py-1 rounded-full hover:bg-[#10b981]/30"
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-64 text-gray-400 text-sm py-8">
+            <User className="h-12 w-12 mb-3 text-gray-600" />
+            <p>Nenhuma conversa {activeTab === 'finalizada' ? 'finalizada' : activeTab === 'aguardando' ? 'aguardando' : 'em andamento'}.</p>
+            <button
+              onClick={handleRefresh}
+              className="mt-4 px-4 py-2 text-xs bg-[#1a2435] hover:bg-[#212d42] text-gray-300 rounded-md flex items-center gap-2"
             >
-              Limpar todos
+              {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              Atualizar conversas
             </button>
           </div>
         )}
-        
-        {/* Mensagem de nenhuma conversa */}
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center p-6">
-            <div className="flex items-center justify-center w-16 h-16 mx-auto mb-4 rounded-full bg-[#0f1621] border border-[#1f2937]/40">
-              <MessageSquareOff className="h-8 w-8 text-slate-500" />
-            </div>
-            <h3 className="text-lg font-medium text-white mb-2">
-              {hasActiveFilters 
-                ? 'Nenhuma conversa corresponde aos filtros' 
-                : 'Nenhuma conversa disponível'}
-            </h3>
-            <p className="text-sm text-slate-400 max-w-md">
-              {hasActiveFilters 
-                ? 'Tente ajustar seus filtros de pesquisa para ver mais resultados.' 
-                : 'Conversas aparecem aqui quando clientes iniciarem contato.'}
-            </p>
-            
-            {hasActiveFilters && (
-              <Button 
-                onClick={clearFilters}
-                variant="outline"
-                className="mt-4 bg-[#0f1621] border-[#1f2937]/50 text-slate-300 hover:text-white hover:bg-[#101820]"
-              >
-                Limpar filtros
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-  
-  // Renderizar lista de conversas
-  return (
-    <div className="h-full flex flex-col">
-      {/* Barra de pesquisa e filtros */}
-      <div className="mb-4 flex gap-2 items-center">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-500" />
-          <Input
-            type="text"
-            placeholder="Pesquisar conversas..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 bg-[#0f1621] border-[#1f2937]/50 text-white"
-          />
-        </div>
-        
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button 
-              variant="outline" 
-              size="icon"
-              className={`h-10 w-10 border-[#1f2937]/50 bg-[#0f1621] ${hasActiveFilters ? 'text-[#10b981]' : 'text-slate-400'}`}
-            >
-              <Filter className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="bg-[#0f1621] border-[#1f2937]/50 text-slate-200">
-            <DropdownMenuLabel>Filtrar por</DropdownMenuLabel>
-            <DropdownMenuSeparator className="bg-[#1f2937]/30" />
-            
-            <div className="px-2 py-1.5">
-              <p className="text-xs font-medium mb-1.5 text-slate-400">Status</p>
-              <div className="flex flex-wrap gap-1">
-                <Badge 
-                  className={`cursor-pointer ${
-                    activeFilters.status.includes('aguardando') 
-                      ? 'bg-amber-600' 
-                      : 'bg-[#1f2937]/40 hover:bg-[#1f2937]/60'
-                  }`}
-                  onClick={() => toggleStatusFilter('aguardando')}
-                >
-                  Aguardando
-                </Badge>
-                <Badge 
-                  className={`cursor-pointer ${
-                    activeFilters.status.includes('andamento') 
-                      ? 'bg-[#10b981]' 
-                      : 'bg-[#1f2937]/40 hover:bg-[#1f2937]/60'
-                  }`}
-                  onClick={() => toggleStatusFilter('andamento')}
-                >
-                  Em andamento
-                </Badge>
-                <Badge 
-                  className={`cursor-pointer ${
-                    activeFilters.status.includes('finalizado') 
-                      ? 'bg-blue-600' 
-                      : 'bg-[#1f2937]/40 hover:bg-[#1f2937]/60'
-                  }`}
-                  onClick={() => toggleStatusFilter('finalizado')}
-                >
-                  Finalizado
-                </Badge>
-              </div>
-            </div>
-            
-            {sectors && sectors.length > 0 && (
-              <div className="px-2 py-1.5">
-                <p className="text-xs font-medium mb-1.5 text-slate-400">Setor</p>
-                <div className="flex flex-wrap gap-1">
-                  {sectors.map(sector => (
-                    <Badge 
-                      key={sector._id || sector.id}
-                      className={`cursor-pointer ${
-                        activeFilters.sector.includes(sector._id || sector.id) 
-                          ? 'bg-[#10b981]' 
-                          : 'bg-[#1f2937]/40 hover:bg-[#1f2937]/60'
-                      }`}
-                      onClick={() => toggleSectorFilter(sector._id || sector.id)}
-                    >
-                      {sector.nome}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-            
-            <DropdownMenuSeparator className="bg-[#1f2937]/30" />
-            <DropdownMenuItem 
-              className="text-center justify-center text-slate-400 hover:text-white cursor-pointer hover:bg-[#101820]"
-              onClick={clearFilters}
-            >
-              Limpar filtros
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      
-      {/* Chips de filtros ativos */}
-      {hasActiveFilters && (
-        <div className="flex flex-wrap gap-2 mb-4">
-          {searchTerm && (
-            <div className="flex items-center gap-1 text-xs bg-[#1f2937]/40 text-slate-300 px-2 py-1 rounded-full">
-              <span>"{searchTerm}"</span>
-              <button 
-                onClick={() => setSearchTerm('')}
-                className="ml-1 hover:text-white"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          )}
-          
-          {activeFilters.status.map(status => (
-            <div key={status} className="flex items-center gap-1 text-xs bg-[#1f2937]/40 text-slate-300 px-2 py-1 rounded-full">
-              <span>Status: {status}</span>
-              <button 
-                onClick={() => toggleStatusFilter(status)}
-                className="ml-1 hover:text-white"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
-          
-          {activeFilters.sector.map(sectorId => {
-            const sector = sectors.find(s => s._id === sectorId || s.id === sectorId);
-            return (
-              <div key={sectorId} className="flex items-center gap-1 text-xs bg-[#1f2937]/40 text-slate-300 px-2 py-1 rounded-full">
-                <span>Setor: {sector?.nome || sectorId}</span>
-                <button 
-                  onClick={() => toggleSectorFilter(sectorId)}
-                  className="ml-1 hover:text-white"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            );
-          })}
-          
-          <button 
-            onClick={clearFilters}
-            className="text-xs bg-[#10b981]/20 text-[#10b981] px-2 py-1 rounded-full hover:bg-[#10b981]/30"
-          >
-            Limpar todos
-          </button>
-        </div>
-      )}
-      
-      {/* Lista de conversas */}
-      <div className="space-y-2 overflow-auto pb-6">
-        <AnimatePresence>
-          {filteredConversations.map(conversation => {
-            // Verificar se a conversa pertence ao setor do usuário
-            const userSectorId = userSector?._id || userSector?.id || '';
-            
-            // Verificar se setorId é objeto ou string
-            const conversationSectorId = typeof conversation.setorId === 'object' && conversation.setorId !== null
-              ? conversation.setorId._id || conversation.setorId.id
-              : conversation.setorId || '';
-              
-            const isUserSector = userSectorId && conversationSectorId && userSectorId === conversationSectorId;
-            
-            return (
-              <ConversationItem
-                key={conversation._id || conversation.id}
-                conversation={conversation}
-                onClick={() => onSelectConversation(conversation._id || conversation.id)}
-                formatLastMessageTime={formatLastMessageTime}
-                isUserSector={isUserSector}
-              />
-            );
-          })}
-        </AnimatePresence>
       </div>
     </div>
   );

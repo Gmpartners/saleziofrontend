@@ -6,7 +6,7 @@ import { AuthContextProvider } from './contexts/AuthContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as serviceWorkerRegistration from './serviceWorkerRegistration';
 // Importar utilitário de testes para chat
-import './utils/chatTester.js';
+import './utils/chatTestUtils.js';
 
 // Criar instância do QueryClient
 const queryClient = new QueryClient({

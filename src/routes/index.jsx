@@ -1,54 +1,55 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-// Corrigindo a extensão do arquivo para .jsx em vez de .js
-import { RequireAuth, RequireAdmin } from '../middlewares/authMiddleware.jsx';
+import { SocketProvider } from '../contexts/SocketContext';
 
-// Páginas de autenticação
-import Login from '../pages/Login/Login';
-import Signup from '../pages/Signup/Signup';
-import Unauthorized from '../pages/Error/Unauthorized';
+// Páginas
+import AnalyticsPage from '../pages/AnalyticsPage';
+import ConversationsPage from '../pages/ConversationsPage';
+import NotificationsPage from '../pages/NotificationsPage';
+import SettingsPage from '../pages/SettingsPage';
+import HelpPage from '../pages/HelpPage';
+import NotFoundPage from '../pages/NotFoundPage';
+import ProfilePage from '../pages/ProfilePage';
+import LoginPage from '../pages/auth/LoginPage';
+import SignupPage from '../pages/auth/SignupPage';
+import ResetPasswordPage from '../pages/auth/ResetPasswordPage';
 
-// Páginas de usuário
-import ConversationsPage from '../pages/Conversations/ConversationsPage';
-import ConversationDetail from '../pages/Conversations/ConversationDetail';
-import AnalyticsPage from '../pages/Analytics/AnalyticsPage';
-import UserProfile from '../pages/Profile/UserProfile';
+// Layouts
+import AppLayout from '../layouts/AppLayout';
+import AuthLayout from '../layouts/AuthLayout';
 
-// Páginas de administração
-import AdminDashboard from '../pages/Admin/AdminDashboard';
-import SectorManagement from '../pages/Admin/SectorManagement';
-import UserManagement from '../pages/Admin/UserManagement';
-import AdminAnalytics from '../pages/Admin/AdminAnalytics';
-
-// Nova página de diagnóstico
-import DiagnosticoSetor from '../pages/DiagnosticoSetor';
+// Proteção de rota
+import ProtectedRoute from './ProtectedRoute';
 
 const AppRoutes = () => {
   return (
     <Routes>
-      {/* Rotas públicas */}
-      <Route path="/login" element={<Login />} />
-      <Route path="/signup" element={<Signup />} />
-      <Route path="/unauthorized" element={<Unauthorized />} />
-      
-      {/* Rotas protegidas (requer autenticação) */}
-      <Route path="/" element={<RequireAuth><Navigate to="/conversations" replace /></RequireAuth>} />
-      <Route path="/conversations" element={<RequireAuth><ConversationsPage /></RequireAuth>} />
-      <Route path="/conversations/:id" element={<RequireAuth><ConversationDetail /></RequireAuth>} />
-      <Route path="/analytics" element={<RequireAuth><AnalyticsPage /></RequireAuth>} />
-      <Route path="/profile" element={<RequireAuth><UserProfile /></RequireAuth>} />
-      
-      {/* Página de diagnóstico do setor Financeiro */}
-      <Route path="/diagnostico" element={<RequireAuth><DiagnosticoSetor /></RequireAuth>} />
-      
-      {/* Rotas de administração (requer papel de admin) */}
-      <Route path="/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
-      <Route path="/admin/sectors" element={<RequireAdmin><SectorManagement /></RequireAdmin>} />
-      <Route path="/admin/users" element={<RequireAdmin><UserManagement /></RequireAdmin>} />
-      <Route path="/admin/analytics" element={<RequireAdmin><AdminAnalytics /></RequireAdmin>} />
-      
-      {/* Rota padrão - redirecionar para conversas */}
-      <Route path="*" element={<Navigate to="/conversations" replace />} />
+      {/* Rotas autenticadas */}
+      <Route element={<ProtectedRoute />}>
+        <Route element={
+          <SocketProvider>
+            <AppLayout />
+          </SocketProvider>
+        }>
+          <Route path="/" element={<Navigate to="/conversations" replace />} />
+          <Route path="/conversations" element={<ConversationsPage />} />
+          <Route path="/analytics" element={<AnalyticsPage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/help" element={<HelpPage />} />
+        </Route>
+      </Route>
+
+      {/* Rotas de autenticação */}
+      <Route element={<AuthLayout />}>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/signup" element={<SignupPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+      </Route>
+
+      {/* Rota 404 */}
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 };

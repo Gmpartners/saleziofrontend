@@ -1,17 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 /**
  * Componente que exibe um efeito visual quando novos dados são recebidos
+ * Usar memo para evitar re-renderizações desnecessárias
  */
-const LiveUpdateEffect = ({ show, duration = 1000, children }) => {
+const LiveUpdateEffect = memo(function LiveUpdateEffect({ show, duration = 1000, children }) {
   const [isVisible, setIsVisible] = useState(false);
   
   useEffect(() => {
     if (show) {
-      setIsVisible(true);
+      // Usando um timestamp para evitar múltiplas atualizações em sequência
+      const timestamp = Date.now();
+      setIsVisible(timestamp);
+      
       const timer = setTimeout(() => {
-        setIsVisible(false);
+        // Somente limpar se o timestamp corresponder
+        setIsVisible(prev => prev === timestamp ? false : prev);
       }, duration);
       
       return () => clearTimeout(timer);
@@ -34,6 +39,6 @@ const LiveUpdateEffect = ({ show, duration = 1000, children }) => {
       )}
     </AnimatePresence>
   );
-};
+});
 
 export default LiveUpdateEffect;

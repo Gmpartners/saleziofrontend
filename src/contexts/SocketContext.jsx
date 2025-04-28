@@ -1,15 +1,16 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
-import { socketService } from '../services/socket';
+import { realtimeService } from '../services/realtimeService';
 import { multiflowApi } from '../services/multiflowApi';
 import { notificationService } from '../services/notificationService';
 import { useAuthContext } from '../hooks/useAuthContext';
-import { API_ENDPOINTS } from '../config/syncConfig';
 
 // Mapeamento de eventos da API MultiFlow
 export const MultiFlowEventosMap = {
   NOVA_CONVERSA: 'nova_conversa',
   NOVA_MENSAGEM: 'nova_mensagem',
-  CONVERSA_ATUALIZADA: 'conversa_atualizada'
+  CONVERSA_ATUALIZADA: 'conversa_atualizada',
+  DIGITANDO: 'typing',
+  MENSAGEM_LIDA: 'message_read'
 };
 
 // Mapeamento de status da API MultiFlow
@@ -19,11 +20,18 @@ export const MultiFlowStatusMap = {
   FINALIZADA: 'finalizada'
 };
 
-// Criar contexto para WebSocket
+// Criar contexto para comunicação em tempo real
 export const SocketContext = createContext(null);
 
 // Hook para acessar o contexto
 export const useSocket = () => useContext(SocketContext);
+
+// Variável para rastrear estado global entre renderizações
+const globalState = {
+  isInitialized: false,
+  lastConversationUpdate: {},
+  manualRefreshInProgress: false
+};
 
 export const SocketProvider = ({ children }) => {
   const { user, userProfile } = useAuthContext();
@@ -34,21 +42,17 @@ export const SocketProvider = ({ children }) => {
   const [connectionError, setConnectionError] = useState(null);
   const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [typingUsers, setTypingUsers] = useState({});
   
-  // Usar uma ref para rastrear a conversa selecionada sem causar re-renders
+  // Refs para otimização
   const selectedConversationIdRef = useRef(null);
-  
-  // Ref para rastrear o foco da aplicação
   const appFocusedRef = useRef(document.hasFocus());
   const lastUpdateTimestampRef = useRef(Date.now());
-  
-  // Referência para controlar as requisições
   const isRefreshingRef = useRef(false);
   const shouldRefreshRef = useRef(false);
   const isRefreshingCompletedRef = useRef(false);
-  
-  // Indicador de inicialização
-  const isInitializedRef = useRef(false);
+  const optimisticMessagesRef = useRef(new Map());
+  const debounceTypingRef = useRef(null);
   
   // URL do servidor WebSocket
   const socketURL = import.meta.env.VITE_SOCKET_URL || 'https://multi.compracomsegurancaeconfianca.com';
@@ -58,17 +62,24 @@ export const SocketProvider = ({ children }) => {
     const handleFocus = () => {
       console.log('Aplicação ganhou foco');
       appFocusedRef.current = true;
+      
       // Recarregar dados quando o app ganhar foco após um período sem atualizações
       const now = Date.now();
       if (now - lastUpdateTimestampRef.current > 300000) { // 5 minutos
         shouldRefreshRef.current = true;
         triggerRefresh();
       }
+      
       // Limpar indicador de mensagens não lidas
       setHasUnreadMessages(false);
       
       // Restaurar título original da página
       document.title = document.title.split(' • ')[0] || 'Dashboard';
+      
+      // Marcar mensagens como lidas se estiver na conversa ativa
+      if (selectedConversationIdRef.current) {
+        markMessagesAsRead(selectedConversationIdRef.current);
+      }
     };
     
     const handleBlur = () => {
@@ -97,16 +108,90 @@ export const SocketProvider = ({ children }) => {
     }
   }, []);
 
-  // Verificar periodicamente o status da conexão (sem buscar dados)
+  // Função para forçar o recarregamento da conversa atual
+  const forceRefreshCurrentConversation = useCallback(async () => {
+    // Evitar múltiplas chamadas simultâneas
+    if (globalState.manualRefreshInProgress) {
+      console.log('⚠️ Atualização já em andamento, ignorando chamada');
+      return null;
+    }
+    
+    if (!selectedConversationIdRef.current || !user || !userProfile) {
+      console.log('⚠️ Sem conversa selecionada ou usuário não logado');
+      return null;
+    }
+    
+    const conversationId = selectedConversationIdRef.current;
+    
+    // Verificar se a conversa foi atualizada recentemente (nos últimos 10 segundos)
+    const now = Date.now();
+    const lastUpdate = globalState.lastConversationUpdate[conversationId] || 0;
+    if (now - lastUpdate < 10000) { // 10 segundos
+      console.log('⚠️ Conversa atualizada recentemente, ignorando');
+      return selectedConversation;
+    }
+    
+    globalState.manualRefreshInProgress = true;
+    console.log('🔄 Forçando atualização da conversa atual:', conversationId);
+    
+    try {
+      const userId = userProfile?.id || user?.uid;
+      
+      // Buscar detalhes atualizados da conversa pela API
+      const response = await multiflowApi.api.get(
+        `/users/${userId}/conversas/${conversationId}`
+      );
+      
+      if (response.data && response.data.success && response.data.data) {
+        console.log('📥 Detalhes atualizados da conversa recebidos do servidor');
+        
+        // Registrar timestamp da atualização
+        globalState.lastConversationUpdate[conversationId] = now;
+        
+        // Garantir que a conversa tem um array de mensagens
+        const updatedConversation = {
+          ...response.data.data,
+          mensagens: response.data.data.mensagens || [],
+          unreadCount: 0, // Zerar contador ao atualizar
+          lastMessageRead: true // Marcar última mensagem como lida
+        };
+        
+        // Atualizar o estado com a conversa atualizada
+        setSelectedConversation(updatedConversation);
+        
+        // Também atualizar na lista geral de conversas
+        setConversations(prev => 
+          prev.map(conv => 
+            conv._id === conversationId
+              ? { ...conv, ...updatedConversation, unreadCount: 0, lastMessageRead: true }
+              : conv
+          )
+        );
+        
+        return updatedConversation;
+      }
+      return null;
+    } catch (error) {
+      console.error('Erro ao atualizar conversa atual:', error);
+      return null;
+    } finally {
+      // Sempre limpar o flag ao finalizar
+      globalState.manualRefreshInProgress = false;
+    }
+  }, [user, userProfile, selectedConversation]);
+
+  // Verificar periodicamente o status da conexão
   useEffect(() => {
     // Função para verificar e atualizar o status
     const checkConnectionStatus = () => {
-      const connected = socketService.isConnected();
+      const connected = realtimeService.isConnected();
+      const connectionState = realtimeService.getConnectionState();
+      
       if (connected !== isConnected) {
-        console.log(`Status da conexão alterado: ${connected ? 'Conectado' : 'Desconectado'}`);
+        console.log(`Status da conexão alterado: ${connected ? 'Conectado' : 'Desconectado'} (${connectionState})`);
         setIsConnected(connected);
         
-        // Tentar recarregar conversas apenas quando reconectar após um período de desconexão
+        // Tentar recarregar conversas quando reconectar após um período
         if (connected && !isConnected) {
           const now = Date.now();
           if (now - lastUpdateTimestampRef.current > 300000) { // 5 minutos
@@ -115,48 +200,57 @@ export const SocketProvider = ({ children }) => {
           }
         }
       }
+      
+      // Se estiver em estado de falha permanente, mostrar erro
+      if (connectionState === 'FAILED' && connectionError !== 'failed') {
+        setConnectionError('failed');
+        notificationService.notifyError({
+          message: 'Não foi possível reconectar ao servidor. Tente recarregar a página.'
+        });
+      }
     };
 
     // Verificar imediatamente
     checkConnectionStatus();
     
-    // Configurar verificação periódica do status de conexão a cada 30 segundos
-    const intervalId = setInterval(checkConnectionStatus, 30000);
+    // Configurar verificação periódica do status de conexão
+    const intervalId = setInterval(checkConnectionStatus, 10000); // Reduzido para 10 segundos
     
     return () => clearInterval(intervalId);
-  }, [isConnected, triggerRefresh]);
+  }, [isConnected, connectionError, triggerRefresh]);
 
-  // Configurar conexão e listeners do WebSocket - APENAS UMA VEZ!
+  // Configurar conexão e listeners em tempo real - APENAS UMA VEZ!
   useEffect(() => {
     if (!user || !userProfile) return;
     
     // Se já foi inicializado, evitar reinicialização
-    if (isInitializedRef.current) {
+    if (globalState.isInitialized) {
       console.log('SocketContext já está inicializado. Ignorando.');
       return;
     }
     
-    isInitializedRef.current = true;
+    globalState.isInitialized = true;
     console.log('Inicializando SocketContext...');
 
     // Limpar qualquer estado de erro anterior
     setConnectionError(null);
 
-    // Configurar socket com os dados do usuário
+    // Configurar serviço de tempo real com os dados do usuário
     try {
-      console.log(`Inicializando socket para usuário: ${userProfile.id} com papel: ${userProfile.role}`);
+      console.log(`Inicializando comunicação em tempo real para usuário: ${userProfile.id} com papel: ${userProfile.role}`);
       
-      // Inicializar WebSocket com os dados do usuário
-      socketService.setupForUser(socketURL, userProfile.id, userProfile.role, userProfile.setor);
+      // Inicializar com os dados do usuário
+      realtimeService.setupForUser(socketURL, userProfile.id, userProfile.role, userProfile.setor);
       
       // Configurar listeners de evento
       const removeListeners = [
         // Evento de conexão
-        socketService.on('connect', () => {
+        realtimeService.on('connect', () => {
           console.log("Socket conectado com sucesso");
           setIsConnected(true);
+          setConnectionError(null);
           
-          // Fazer apenas a primeira carga de dados ao conectar
+          // Carregar dados ao conectar se necessário
           if (conversations.length === 0) {
             shouldRefreshRef.current = true;
             triggerRefresh();
@@ -164,22 +258,41 @@ export const SocketProvider = ({ children }) => {
         }),
         
         // Evento de desconexão
-        socketService.on('disconnect', () => {
-          console.log("Socket desconectado");
+        realtimeService.on('disconnect', (reason) => {
+          console.log("Socket desconectado:", reason);
           setIsConnected(false);
           
           // Notificar usuário sobre desconexão
           if (connectionError !== 'disconnected') {
             setConnectionError('disconnected');
-            // Notificar com serviço de notificações
             notificationService.notifyError({
               message: 'Conexão perdida. Reconectando...'
             });
           }
         }),
         
+        // Evento de reconexão
+        realtimeService.on('reconnect', (attempt) => {
+          console.log(`Reconectado na tentativa ${attempt}`);
+          setIsConnected(true);
+          setConnectionError(null);
+          
+          // Recarregar dados após reconexão bem-sucedida
+          refreshConversations();
+        }),
+        
+        // Evento de falha na reconexão
+        realtimeService.on('reconnect_failed', () => {
+          console.log('Falha na reconexão após múltiplas tentativas');
+          setConnectionError('failed');
+          
+          notificationService.notifyError({
+            message: 'Não foi possível reconectar. Tente recarregar a página.'
+          });
+        }),
+        
         // Nova conversa
-        socketService.on(MultiFlowEventosMap.NOVA_CONVERSA, (data) => {
+        realtimeService.on(MultiFlowEventosMap.NOVA_CONVERSA, (data) => {
           console.log('Nova conversa:', data);
           
           // Atualizar timestamp da última atualização
@@ -193,6 +306,7 @@ export const SocketProvider = ({ children }) => {
               if (!exists) {
                 // Reproduzir som e notificação visual
                 notificationService.notifyNewConversation(data.conversa);
+                
                 // Indicar que há mensagens não lidas se a aplicação não estiver em foco
                 if (!appFocusedRef.current) {
                   setHasUnreadMessages(true);
@@ -205,8 +319,15 @@ export const SocketProvider = ({ children }) => {
                   lastMessageRead: false
                 };
                 
-                // Adicionar ao início da lista
-                return [conversaWithUnreadCount, ...prev];
+                // Adicionar ao início da lista e ordenar por data
+                const updatedConversations = [conversaWithUnreadCount, ...prev];
+                
+                // Ordenar por última atividade (mais recentes primeiro)
+                return updatedConversations.sort((a, b) => {
+                  const aTime = new Date(a.ultimaAtividade || a.criadoEm || 0).getTime();
+                  const bTime = new Date(b.ultimaAtividade || b.criadoEm || 0).getTime();
+                  return bTime - aTime;
+                });
               }
               return prev;
             });
@@ -214,11 +335,14 @@ export const SocketProvider = ({ children }) => {
         }),
         
         // Nova mensagem
-        socketService.on(MultiFlowEventosMap.NOVA_MENSAGEM, (data) => {
+        realtimeService.on(MultiFlowEventosMap.NOVA_MENSAGEM, (data) => {
           console.log('Nova mensagem recebida:', data);
           
           // Atualizar timestamp da última atualização
           lastUpdateTimestampRef.current = Date.now();
+          
+          // Registrar timestamp da mensagem para esta conversa
+          globalState.lastConversationUpdate[data.conversaId] = Date.now();
           
           // Verificar se é da conversa atual
           const isCurrentConversation = selectedConversationIdRef.current === data.conversaId;
@@ -229,6 +353,15 @@ export const SocketProvider = ({ children }) => {
           // Indicar que há mensagens não lidas se a aplicação não estiver em foco
           if (!appFocusedRef.current) {
             setHasUnreadMessages(true);
+          }
+          
+          // Limpar indicador de digitação para o remetente
+          if (typingUsers[data.conversaId]) {
+            setTypingUsers(prev => {
+              const newState = {...prev};
+              delete newState[data.conversaId];
+              return newState;
+            });
           }
           
           // Atualizar mensagens da conversa selecionada em tempo real
@@ -245,6 +378,12 @@ export const SocketProvider = ({ children }) => {
               
               if (!mensagemJaExiste) {
                 console.log('Adicionando nova mensagem à conversa selecionada');
+                
+                // Se estiver em foco, marcar como lida imediatamente
+                if (appFocusedRef.current) {
+                  markMessageAsRead(data.conversaId, data.mensagem._id);
+                }
+                
                 return {
                   ...prev,
                   mensagens: [...(prev.mensagens || []), data.mensagem],
@@ -259,8 +398,9 @@ export const SocketProvider = ({ children }) => {
           }
           
           // Atualizar a lista de conversas
-          setConversations(prev => 
-            prev.map(conv => {
+          setConversations(prev => {
+            // Primeiro atualizar a conversa existente
+            const updatedConversations = prev.map(conv => {
               if (conv._id === data.conversaId) {
                 // Se for a conversa selecionada e o app estiver em foco, não incrementar contador
                 const shouldIncrementUnread = !isCurrentConversation || !appFocusedRef.current;
@@ -273,16 +413,66 @@ export const SocketProvider = ({ children }) => {
                 };
               }
               return conv;
-            })
-          );
+            });
+            
+            // Verificar se a conversa existe
+            const conversationExists = updatedConversations.some(c => c._id === data.conversaId);
+            
+            // Se não existir, precisamos adicionar
+            if (!conversationExists) {
+              // Buscar detalhes completos da conversa
+              refreshConversations();
+            } else {
+              // Ordenar por última atividade
+              return updatedConversations.sort((a, b) => {
+                const aTime = new Date(a.ultimaAtividade || a.criadoEm || 0).getTime();
+                const bTime = new Date(b.ultimaAtividade || b.criadoEm || 0).getTime();
+                return bTime - aTime;
+              });
+            }
+            
+            return updatedConversations;
+          });
+        }),
+        
+        // Evento de digitação
+        realtimeService.on(MultiFlowEventosMap.DIGITANDO, (data) => {
+          // Ignorar eventos de digitação do próprio usuário
+          if (data.userId === userProfile.id) return;
+          
+          setTypingUsers(prev => ({
+            ...prev,
+            [data.conversaId]: {
+              userId: data.userId,
+              nome: data.userName || 'Cliente'
+            }
+          }));
+          
+          // Limpar o status após 3 segundos sem atividade
+          setTimeout(() => {
+            setTypingUsers(prev => {
+              // Só remover se ainda for o mesmo usuário
+              if (prev[data.conversaId]?.userId === data.userId) {
+                const newState = {...prev};
+                delete newState[data.conversaId];
+                return newState;
+              }
+              return prev;
+            });
+          }, 3000);
         }),
         
         // Conversa atualizada
-        socketService.on(MultiFlowEventosMap.CONVERSA_ATUALIZADA, (data) => {
+        realtimeService.on(MultiFlowEventosMap.CONVERSA_ATUALIZADA, (data) => {
           console.log('Conversa atualizada:', data);
           
           // Atualizar timestamp da última atualização
           lastUpdateTimestampRef.current = Date.now();
+          
+          // Registrar timestamp da atualização para esta conversa
+          if (data.conversa && data.conversa._id) {
+            globalState.lastConversationUpdate[data.conversa._id] = Date.now();
+          }
           
           // Verificar se é a conversa atual
           const isCurrentConversation = selectedConversationIdRef.current === data?.conversa?._id;
@@ -309,14 +499,21 @@ export const SocketProvider = ({ children }) => {
                 }
                 return prev;
               });
+              
+              // Se era a conversa selecionada, limpar seleção
+              if (isCurrentConversation) {
+                setSelectedConversation(null);
+                selectedConversationIdRef.current = null;
+              }
             } else {
               // Atualizar na lista de conversas ativas
               setConversations(prev => {
                 // Verificar se a conversa já existe
                 const exists = prev.some(c => c._id === data.conversa._id);
+                
                 if (exists) {
                   // Preservar contador de mensagens não lidas
-                  return prev.map(conv => {
+                  const updatedConversations = prev.map(conv => {
                     if (conv._id === data.conversa._id) {
                       return {
                         ...data.conversa,
@@ -325,6 +522,13 @@ export const SocketProvider = ({ children }) => {
                       };
                     }
                     return conv;
+                  });
+                  
+                  // Reordenar por última atividade
+                  return updatedConversations.sort((a, b) => {
+                    const aTime = new Date(a.ultimaAtividade || a.criadoEm || 0).getTime();
+                    const bTime = new Date(b.ultimaAtividade || b.criadoEm || 0).getTime();
+                    return bTime - aTime;
                   });
                 } else {
                   // Adicionar nova conversa ao início da lista
@@ -335,28 +539,65 @@ export const SocketProvider = ({ children }) => {
                   }, ...prev];
                 }
               });
-            }
-            
-            // Atualizar a conversa selecionada se for a mesma
-            if (isCurrentConversation) {
-              if (data.conversa.status === MultiFlowStatusMap.FINALIZADA) {
-                // Se a conversa foi finalizada e era a selecionada, limpar seleção
-                setSelectedConversation(null);
-                selectedConversationIdRef.current = null;
-              } else {
-                setSelectedConversation(prev => ({
-                  ...prev,
-                  ...data.conversa,
-                  // Preservar mensagens se elas não vierem na atualização
-                  mensagens: data.conversa.mensagens || prev?.mensagens || []
-                }));
+              
+              // Atualizar a conversa selecionada se for a mesma
+              if (isCurrentConversation) {
+                setSelectedConversation(prev => {
+                  if (!prev) return null;
+                  
+                  // IMPORTANTE: Manter as mensagens atualizadas!
+                  const mergedMessages = data.conversa.mensagens || prev?.mensagens || [];
+                  
+                  // Se tivermos mensagens de ambas as fontes, combinar preservando ordem
+                  if (prev?.mensagens && data.conversa.mensagens && 
+                      prev.mensagens.length > 0 && data.conversa.mensagens.length > 0) {
+                    // Criar um conjunto de IDs de mensagens para facilitar a verificação de duplicatas
+                    const existingIds = new Set(prev.mensagens.map(m => m._id));
+                    // Adicionar apenas novas mensagens
+                    const newMessages = data.conversa.mensagens.filter(m => !existingIds.has(m._id));
+                    
+                    // Combinar preservando a ordem
+                    return {
+                      ...prev,
+                      ...data.conversa,
+                      mensagens: [...prev.mensagens, ...newMessages]
+                    };
+                  }
+                  
+                  return {
+                    ...prev,
+                    ...data.conversa,
+                    mensagens: mergedMessages
+                  };
+                });
               }
             }
           }
         }),
         
-        // Errors
-        socketService.on('error', (error) => {
+        // Mensagem lida
+        realtimeService.on(MultiFlowEventosMap.MENSAGEM_LIDA, (data) => {
+          // Atualizar status de leitura para a mensagem
+          if (selectedConversation && selectedConversation._id === data.conversaId) {
+            setSelectedConversation(prev => {
+              if (!prev) return null;
+              
+              const updatedMessages = prev.mensagens.map(msg => 
+                msg._id === data.messageId ? 
+                  { ...msg, read: true, readAt: data.timestamp } : 
+                  msg
+              );
+              
+              return {
+                ...prev,
+                mensagens: updatedMessages
+              };
+            });
+          }
+        }),
+        
+        // Erros
+        realtimeService.on('error', (error) => {
           console.error('Erro no socket:', error);
           notificationService.notifyError({
             message: `Erro de conexão: ${error.message || 'Desconhecido'}`
@@ -365,7 +606,7 @@ export const SocketProvider = ({ children }) => {
       ];
       
       // Verificar conexão e atualizar estado
-      setIsConnected(socketService.isConnected());
+      setIsConnected(realtimeService.isConnected());
       
       // Carregar lista inicial de conversas
       shouldRefreshRef.current = true;
@@ -373,19 +614,19 @@ export const SocketProvider = ({ children }) => {
       
       // Limpar ao desmontar
       return () => {
-        console.log('Desmontando SocketContext, limpando listeners e desconectando socket');
+        console.log('Desmontando SocketContext, limpando listeners e desconectando');
         removeListeners.forEach(removeListener => {
           if (typeof removeListener === 'function') {
             removeListener();
           }
         });
         
-        // Desconectar o socket
-        socketService.disconnect();
-        isInitializedRef.current = false;
+        // Desconectar
+        realtimeService.disconnect();
+        globalState.isInitialized = false;
       };
     } catch (error) {
-      console.error('Erro ao inicializar socket:', error);
+      console.error('Erro ao inicializar comunicação em tempo real:', error);
       setConnectionError(`Falha ao conectar: ${error.message}`);
       
       // Notificar usuário sobre erro de conexão
@@ -399,11 +640,11 @@ export const SocketProvider = ({ children }) => {
       
       // Limpar ao desmontar mesmo em caso de erro
       return () => {
-        socketService.disconnect();
-        isInitializedRef.current = false;
+        realtimeService.disconnect();
+        globalState.isInitialized = false;
       };
     }
-  }, [user, userProfile, socketURL, triggerRefresh]);
+  }, [user, userProfile, socketURL, triggerRefresh, conversations.length]);
 
   // Atualizar a referência quando a conversa selecionada mudar
   useEffect(() => {
@@ -414,22 +655,39 @@ export const SocketProvider = ({ children }) => {
     }
   }, [selectedConversation]);
 
-  // Selecionar uma conversa com memoização para evitar reconexões desnecessárias
+  // Selecionar uma conversa
   const selectConversation = useCallback(async (conversationId) => {
-    // Evitar reconexões da mesma conversa
-    if (selectedConversationIdRef.current === conversationId && selectedConversation) {
-      console.log(`Conversa ${conversationId} já está selecionada. Retornando dados em cache.`);
-      return selectedConversation;
-    }
+    console.log(`Selecionando conversa: ${conversationId}`);
     
     try {
-      console.log(`Selecionando conversa: ${conversationId}`);
+      const userId = userProfile?.id || user?.uid;
       
-      // Se já tivermos a conversa em cache e ela tiver mensagens, usar cache temporariamente
+      // Verificar se é a mesma conversa que já está selecionada
+      if (selectedConversationIdRef.current === conversationId && selectedConversation) {
+        console.log('Já na conversa selecionada, verificando se precisa atualizar');
+        
+        // Verificar se faz mais de 30 segundos desde a última atualização
+        const now = Date.now();
+        const lastUpdate = globalState.lastConversationUpdate[conversationId] || 0;
+        if (now - lastUpdate > 30000) { // 30 segundos
+          console.log('Conversa não atualizada recentemente, buscando dados do servidor');
+          forceRefreshCurrentConversation();
+        } else {
+          console.log('Conversa atualizada recentemente, usando dados em cache');
+        }
+        
+        // Marcar mensagens como lidas
+        markMessagesAsRead(conversationId);
+        
+        return selectedConversation;
+      }
+      
+      // Mostra temporariamente a versão em cache (se existir) para melhorar UX
       const cachedConversation = conversations.find(conv => conv._id === conversationId) || 
                                 completedConversations.find(conv => conv._id === conversationId);
       
       if (cachedConversation) {
+        console.log('Usando versão em cache temporariamente enquanto carrega dados atualizados');
         // Atualizar imediatamente para melhor UX
         setSelectedConversation(cachedConversation);
         selectedConversationIdRef.current = conversationId;
@@ -447,8 +705,13 @@ export const SocketProvider = ({ children }) => {
         }
       }
       
-      // Buscar detalhes da conversa pela API
-      const userId = userProfile?.id || user?.uid;
+      // Mostrar loading se não tivermos versão em cache
+      if (!cachedConversation) {
+        setIsLoading(true);
+      }
+      
+      // Buscar detalhes da conversa pela API (sempre buscar dados frescos)
+      console.log('Buscando dados atualizados da conversa do servidor...');
       const response = await multiflowApi.api.get(
         `/users/${userId}/conversas/${conversationId}`
       );
@@ -468,10 +731,16 @@ export const SocketProvider = ({ children }) => {
         setSelectedConversation(updatedConversation);
         selectedConversationIdRef.current = conversationId;
         
+        // Registrar momento da atualização
+        globalState.lastConversationUpdate[conversationId] = Date.now();
+        
         // Entrar na sala específica da conversa para receber atualizações
         if (userId) {
-          socketService.joinRoom(`user_${userId}_conversa_${conversationId}`);
+          realtimeService.joinRoom(`user_${userId}_conversa_${conversationId}`);
         }
+        
+        // Marcar mensagens como lidas
+        markMessagesAsRead(conversationId);
         
         // Atualizar status para em_andamento se estiver aguardando
         if (response.data.data.status === MultiFlowStatusMap.AGUARDANDO) {
@@ -513,8 +782,45 @@ export const SocketProvider = ({ children }) => {
       return conversations.find(conv => conv._id === conversationId) || 
              completedConversations.find(conv => conv._id === conversationId) || 
              null;
+    } finally {
+      setIsLoading(false);
     }
-  }, [user, userProfile, conversations, completedConversations, selectedConversation]);
+  }, [user, userProfile, conversations, completedConversations, selectedConversation, forceRefreshCurrentConversation]);
+
+  // Marcar uma mensagem específica como lida
+  const markMessageAsRead = useCallback((conversationId, messageId) => {
+    if (!conversationId || !messageId || !userProfile) return;
+    
+    try {
+      // Enviar confirmação para o servidor
+      multiflowApi.api.post(`/users/${userProfile.id}/conversas/${conversationId}/mensagens/${messageId}/read`);
+      
+      // Não precisamos esperar a resposta - otimista
+    } catch (error) {
+      console.error('Erro ao marcar mensagem como lida:', error);
+    }
+  }, [userProfile]);
+
+  // Marcar todas as mensagens de uma conversa como lidas
+  const markMessagesAsRead = useCallback((conversationId) => {
+    if (!conversationId || !selectedConversation || !userProfile) return;
+    
+    try {
+      // Enviar confirmação para o servidor
+      multiflowApi.api.post(`/users/${userProfile.id}/conversas/${conversationId}/read`);
+      
+      // Atualizar localmente
+      setConversations(prev => 
+        prev.map(conv => 
+          conv._id === conversationId
+            ? { ...conv, unreadCount: 0, lastMessageRead: true }
+            : conv
+        )
+      );
+    } catch (error) {
+      console.error('Erro ao marcar mensagens como lidas:', error);
+    }
+  }, [selectedConversation, userProfile]);
 
   // Enviar mensagem em uma conversa com tratamento otimizado para atualização em tempo real
   const sendMessage = useCallback(async (conversationId, text) => {
@@ -522,18 +828,21 @@ export const SocketProvider = ({ children }) => {
       console.log(`Enviando mensagem para conversa ${conversationId}:`, text);
       
       // Criar id único para mensagem otimista
-      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       
       // Otimista: adicionar mensagem localmente antes da confirmação do servidor
       const optimisticMessage = {
         _id: tempId,
         conversaId: conversationId,
-        conteudo: text,
+        conteudo: text.trim(),
         remetente: 'atendente',
         timestamp: new Date().toISOString(),
         status: 'sending',
         createdAt: new Date().toISOString()
       };
+      
+      // Armazenar para controle
+      optimisticMessagesRef.current.set(tempId, optimisticMessage);
       
       // Adicionar à conversa atual se for a mesma
       if (selectedConversationIdRef.current === conversationId) {
@@ -547,28 +856,41 @@ export const SocketProvider = ({ children }) => {
             ...prev,
             mensagens: updatedMessages,
             ultimaAtividade: optimisticMessage.timestamp,
-            ultimaMensagem: text,
+            ultimaMensagem: text.trim(),
             lastMessageRead: true
           };
         });
       }
       
       // Atualizar temporariamente na lista de conversas
-      setConversations(prev => 
-        prev.map(conv => 
+      setConversations(prev => {
+        const updatedConversations = prev.map(conv => 
           conv._id === conversationId
             ? { 
                 ...conv, 
-                ultimaMensagem: text,
+                ultimaMensagem: text.trim(),
                 ultimaAtividade: optimisticMessage.timestamp,
                 lastMessageRead: true
               }
             : conv
-        )
-      );
+        );
+        
+        // Reordenar para colocar a conversa no topo
+        return updatedConversations.sort((a, b) => {
+          if (a._id === conversationId) return -1;
+          if (b._id === conversationId) return 1;
+          
+          const aTime = new Date(a.ultimaAtividade || a.criadoEm || 0).getTime();
+          const bTime = new Date(b.ultimaAtividade || b.criadoEm || 0).getTime();
+          return bTime - aTime;
+        });
+      });
+      
+      // Registrar momento da atualização
+      globalState.lastConversationUpdate[conversationId] = Date.now();
       
       // Enviar para o servidor
-      const response = await multiflowApi.enviarMensagem(conversationId, text);
+      const response = await multiflowApi.enviarMensagem(conversationId, text.trim());
       
       if (response.success) {
         console.log('Mensagem enviada com sucesso:', response.data);
@@ -598,6 +920,9 @@ export const SocketProvider = ({ children }) => {
             };
           });
         }
+        
+        // Remover da lista de mensagens otimistas
+        optimisticMessagesRef.current.delete(tempId);
         
         // Notificar sobre envio bem-sucedido
         notificationService.showToast('Mensagem enviada com sucesso', 'success');
@@ -657,6 +982,24 @@ export const SocketProvider = ({ children }) => {
     }
   }, []);
 
+  // Indicar que o usuário está digitando
+  const sendTypingIndicator = useCallback((conversationId) => {
+    if (!conversationId || !userProfile) return;
+    
+    // Evitar envio excessivo com debounce
+    if (debounceTypingRef.current) {
+      clearTimeout(debounceTypingRef.current);
+    }
+    
+    debounceTypingRef.current = setTimeout(() => {
+      // Enviar apenas se estiver conectado
+      if (realtimeService.isConnected()) {
+        realtimeService.sendTypingIndicator(conversationId);
+      }
+      debounceTypingRef.current = null;
+    }, 300);
+  }, [userProfile]);
+
   // Transferir conversa para outro setor
   const transferConversation = useCallback(async (conversationId, sectorId) => {
     try {
@@ -685,6 +1028,9 @@ export const SocketProvider = ({ children }) => {
             );
           }
         }
+        
+        // Mostrar notificação de sucesso
+        notificationService.showToast('Conversa transferida com sucesso', 'success');
       }
       
       return response.success;
@@ -731,6 +1077,9 @@ export const SocketProvider = ({ children }) => {
             prev.filter(conv => conv._id !== conversationId)
           );
         }
+        
+        // Mostrar notificação de sucesso
+        notificationService.showToast('Conversa finalizada com sucesso', 'success');
         
         return true;
       } else {
@@ -780,6 +1129,9 @@ export const SocketProvider = ({ children }) => {
         setCompletedConversations(prev => 
           prev.filter(conv => conv._id !== conversationId)
         );
+        
+        // Mostrar notificação de sucesso
+        notificationService.showToast('Conversa arquivada com sucesso', 'success');
         
         return true;
       } else {
@@ -862,10 +1214,20 @@ export const SocketProvider = ({ children }) => {
             .filter(c => conversasComStatus.some(newC => newC._id === c._id)); // Manter apenas as que ainda existem
           
           // Adicionar novas conversas no início
-          setConversations([...newConversations, ...updatedExistingConversations]);
+          const mergedConversations = [...newConversations, ...updatedExistingConversations];
+          
+          // Ordenar por última atividade
+          setConversations(mergedConversations.sort((a, b) => {
+            const aTime = new Date(a.ultimaAtividade || a.criadoEm || 0).getTime();
+            const bTime = new Date(b.ultimaAtividade || b.criadoEm || 0).getTime();
+            return bTime - aTime;
+          }));
         } else {
           setConversations(conversasComStatus);
         }
+        
+        // Notificar sucesso
+        notificationService.showToast('Conversas atualizadas', 'success');
       } else {
         console.warn('Falha ao buscar conversas:', response);
         // Mesmo sem sucesso, tente manter as conversas já carregadas
@@ -994,7 +1356,12 @@ export const SocketProvider = ({ children }) => {
     
     // Limpar indicadores visuais na interface
     document.title = document.title.split(' • ')[0] || 'Dashboard';
-  }, []);
+    
+    // Marcar mensagens como lidas na conversa atual
+    if (selectedConversationIdRef.current) {
+      markMessagesAsRead(selectedConversationIdRef.current);
+    }
+  }, [markMessagesAsRead]);
   
   // Testar recebimento de mensagens
   const testReceiveMessage = useCallback((conversationId, text = "Mensagem de teste simulada") => {
@@ -1004,7 +1371,7 @@ export const SocketProvider = ({ children }) => {
     }
     
     console.log(`Simulando recebimento de mensagem na conversa ${conversationId}`);
-    const mockMessage = socketService.simulateNewMessage(conversationId, text);
+    const mockMessage = realtimeService.simulateNewMessage(conversationId, text);
     return mockMessage;
   }, []);
 
@@ -1017,8 +1384,10 @@ export const SocketProvider = ({ children }) => {
     selectedConversation,
     hasUnreadMessages,
     isLoading,
+    typingUsers,
     selectConversation,
     sendMessage,
+    sendTypingIndicator,
     transferConversation,
     finishConversation,
     archiveConversation,
@@ -1026,12 +1395,17 @@ export const SocketProvider = ({ children }) => {
     refreshCompletedConversations,
     retryFailedMessage,
     clearUnreadMessages,
+    markMessagesAsRead,
     testReceiveMessage, // Função para testar recebimento
+    forceRefreshCurrentConversation, // Função para forçar atualização
     // Serviços
     api: multiflowApi,
-    socketService,
+    realtimeService,
     notificationService
   };
+
+  // Disponibilizar o contexto para testes no console
+  window.socketContext = value;
 
   return (
     <SocketContext.Provider value={value}>

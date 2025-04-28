@@ -1,51 +1,81 @@
-// pages/Conversations/ConversationsPage.jsx
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Filter, Clock, MessageSquare, User, MessageSquareOff, CheckCircle2 } from 'lucide-react';
+// src/pages/Conversations/ConversationsPage.jsx
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { 
+  MessageSquare, 
+  MessageSquareOff, 
+  ArrowLeft,
+  X,
+  Check,
+  Share
+} from 'lucide-react';
 
 // Contexts e Hooks
 import { useSocket } from '../../contexts/SocketContext';
 import { useAuthContext } from '../../hooks/useAuthContext';
+import { useMessageEffect } from '../../hooks/chat/useMessageEffect';
 
 // Components
-import { Badge } from '../../components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import { Skeleton } from '../../components/ui/skeleton';
-import ConversationHeader from '../../components/conversations/ConversationHeader';
-import ConversationItem from '../../components/conversations/ConversationItem';
-
-// Constants
-import { MultiFlowStatusMap } from '../../contexts/SocketContext';
+import ConversationsList from '../../components/conversations/ConversationsList';
+import ConversationDetail from '../../components/conversations/ConversationDetail';
+import { Button } from '../../components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
+import { notificationService } from '../../services/notificationService';
 
 const ConversationsPage = () => {
+  const { conversationId } = useParams();
   const navigate = useNavigate();
   const { userProfile, userSector, userSectorName, sectors } = useAuthContext();
   const { 
     conversations, 
     completedConversations,
+    selectedConversation, 
     selectConversation, 
+    sendMessage,
+    transferConversation,
+    finishConversation,
+    archiveConversation,
     refreshConversations,
     refreshCompletedConversations,
     isConnected,
     hasUnreadMessages,
-    clearUnreadMessages
+    clearUnreadMessages,
+    isLoading,
+    sendTypingIndicator
   } = useSocket();
+
+  const { notificationsEnabled, toggleNotifications } = useMessageEffect();
   
+  // Estado da interface
   const [activeTab, setActiveTab] = useState('all');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingCompleted, setIsLoadingCompleted] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isMobileDetailView, setIsMobileDetailView] = useState(false);
   const [loadingError, setLoadingError] = useState(null);
-  const [filteredConversations, setFilteredConversations] = useState([]);
-  const [filteredCompletedConversations, setFilteredCompletedConversations] = useState([]);
-  const [activeFilters, setActiveFilters] = useState({
-    sectors: [],
-    scheduleStatus: []
-  });
   
-  // Referência para o último tempo de atualização
-  const lastRefreshTimeRef = useRef(Date.now());
+  // Estados para diálogos
+  const [showTransferDialog, setShowTransferDialog] = useState(false);
+  const [showFinishDialog, setShowFinishDialog] = useState(false);
+  const [showArchiveDialog, setShowArchiveDialog] = useState(false);
+  const [selectedSector, setSelectedSector] = useState(null);
+  
+  // Detectar tamanho da tela para responsividade
+  useEffect(() => {
+    const handleResize = () => {
+      const isMobile = window.innerWidth < 768;
+      setIsMobileDetailView(isMobile && !!selectedConversation);
+    };
+    
+    // Verificar inicialmente
+    handleResize();
+    
+    // Adicionar listener para redimensionamento
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [selectedConversation]);
   
   // Limpar flag de mensagens não lidas quando a página é visualizada
   useEffect(() => {
@@ -54,119 +84,20 @@ const ConversationsPage = () => {
     }
   }, [hasUnreadMessages, clearUnreadMessages]);
   
-  // Filtrar e agrupar conversas
-  useEffect(() => {
-    if (conversations) {
-      setIsLoading(false);
-      
-      // Aplicar todos os filtros em uma única passagem
-      const filtered = conversations.filter(conv => {
-        // Verificar se a conversa é válida
-        if (!conv || (typeof conv !== 'object')) return false;
-        
-        // 1. Filtro de pesquisa
-        const searchTermLower = searchTerm.toLowerCase();
-        const matchesSearch = !searchTerm || 
-          (conv.nomeCliente?.toLowerCase()?.includes(searchTermLower)) ||
-          (conv.cliente?.nome?.toLowerCase()?.includes(searchTermLower)) ||
-          (conv.cliente?.telefone?.includes(searchTerm)) ||
-          (conv.telefoneCliente?.includes(searchTerm)) ||
-          (conv.ultimaMensagem?.toLowerCase()?.includes(searchTermLower));
-        
-        if (!matchesSearch) return false;
-        
-        // 2. Filtro por status (considerando formatos diferentes)
-        const status = conv.status || '';
-        const statusLower = status.toLowerCase();
-        
-        if (activeTab === 'waiting' && 
-            !(statusLower === 'aguardando' || status === 'AGUARDANDO')) return false;
-            
-        if (activeTab === 'ongoing' && 
-            !(statusLower === 'em_andamento' || statusLower === 'em andamento' || status === 'EM_ANDAMENTO')) return false;
-        
-        // 3. Filtro por setor (apenas se houver filtros ativos)
-        if (activeFilters.sectors.length > 0) {
-          const setorId = conv.setorId?._id || conv.setorId;
-          if (!setorId || !activeFilters.sectors.includes(setorId)) return false;
-        }
-        
-        // 4. Filtro por status de agendamento (apenas se houver filtros ativos)
-        if (activeFilters.scheduleStatus.length > 0) {
-          const agendamentoStatus = conv.agendamento?.status;
-          if (!agendamentoStatus || !activeFilters.scheduleStatus.includes(agendamentoStatus)) return false;
-        }
-        
-        return true;
-      });
-      
-      // Ordenar por última atividade (mais recente primeiro)
-      filtered.sort((a, b) => {
-        const aTime = new Date(a.ultimaAtividade || a.criadoEm || 0).getTime();
-        const bTime = new Date(b.ultimaAtividade || b.criadoEm || 0).getTime();
-        return bTime - aTime;
-      });
-      
-      setFilteredConversations(filtered);
-    }
-  }, [conversations, searchTerm, activeTab, activeFilters]);
-
-  // Filtrar e agrupar conversas concluídas
-  useEffect(() => {
-    if (completedConversations) {
-      setIsLoadingCompleted(false);
-      
-      // Aplicar filtros às conversas concluídas
-      const filtered = completedConversations.filter(conv => {
-        // Verificar se a conversa é válida
-        if (!conv || (typeof conv !== 'object')) return false;
-        
-        // Filtro de pesquisa
-        const searchTermLower = searchTerm.toLowerCase();
-        const matchesSearch = !searchTerm || 
-          (conv.nomeCliente?.toLowerCase()?.includes(searchTermLower)) ||
-          (conv.cliente?.nome?.toLowerCase()?.includes(searchTermLower)) ||
-          (conv.cliente?.telefone?.includes(searchTerm)) ||
-          (conv.telefoneCliente?.includes(searchTerm)) ||
-          (conv.ultimaMensagem?.toLowerCase()?.includes(searchTermLower));
-        
-        if (!matchesSearch) return false;
-        
-        // Filtro por setor (apenas se houver filtros ativos)
-        if (activeFilters.sectors.length > 0) {
-          const setorId = conv.setorId?._id || conv.setorId;
-          if (!setorId || !activeFilters.sectors.includes(setorId)) return false;
-        }
-        
-        return true;
-      });
-      
-      // Ordenar por última atividade (mais recente primeiro)
-      filtered.sort((a, b) => {
-        const aTime = new Date(a.ultimaAtividade || a.criadoEm || 0).getTime();
-        const bTime = new Date(b.ultimaAtividade || b.criadoEm || 0).getTime();
-        return bTime - aTime;
-      });
-      
-      setFilteredCompletedConversations(filtered);
-    }
-  }, [completedConversations, searchTerm, activeFilters]);
-  
   // Carregar conversas iniciais
   useEffect(() => {
     const loadConversations = async () => {
-      setIsLoading(true);
+      setIsRefreshing(true);
       setLoadingError(null);
       
       try {
         // Não usar nenhum filtro adicional, mostrar todas as conversas
         await refreshConversations({});
-        lastRefreshTimeRef.current = Date.now();
       } catch (error) {
         console.error('Erro ao carregar conversas:', error);
         setLoadingError('Não foi possível carregar as conversas. Tente novamente.');
       } finally {
-        setIsLoading(false);
+        setIsRefreshing(false);
       }
     };
     
@@ -174,17 +105,24 @@ const ConversationsPage = () => {
     loadConversations();
   }, [refreshConversations]);
 
+  // Carregar conversa específica quando a URL for acessada diretamente com ID
+  useEffect(() => {
+    if (conversationId && !selectedConversation) {
+      selectConversation(conversationId);
+    }
+  }, [conversationId, selectedConversation, selectConversation]);
+
   // Carregar conversas concluídas ao selecionar a aba
   useEffect(() => {
     const loadCompletedConversations = async () => {
       if (activeTab === 'completed' && (!completedConversations || completedConversations.length === 0)) {
-        setIsLoadingCompleted(true);
+        setIsRefreshing(true);
         try {
           await refreshCompletedConversations();
         } catch (error) {
           console.error('Erro ao carregar conversas concluídas:', error);
         } finally {
-          setIsLoadingCompleted(false);
+          setIsRefreshing(false);
         }
       }
     };
@@ -192,303 +130,398 @@ const ConversationsPage = () => {
     loadCompletedConversations();
   }, [activeTab, completedConversations, refreshCompletedConversations]);
   
-  // Navegação para a conversa selecionada
-  const handleSelectConversation = (conversationId) => {
-    selectConversation(conversationId);
-    navigate(`/conversations/${conversationId}`);
-  };
-  
-  // Limpar todos os filtros
-  const clearFilters = () => {
-    setActiveFilters({
-      sectors: [],
-      scheduleStatus: []
-    });
-    setSearchTerm('');
-  };
-
-  // Verificar mudança de aba
-  const handleTabChange = (value) => {
-    setActiveTab(value);
-    // Se selecionar a aba de conversas concluídas e ainda não tiver carregado, carregar
-    if (value === 'completed' && (!completedConversations || completedConversations.length === 0)) {
-      refreshCompletedConversations();
-    }
-  };
-  
-  // O nome de exibição para o setor
-  const sectorDisplayName = userSectorName || (userSector?.nome) || 'Todas as Conversas';
-  
-  // Verificar se há filtros ativos
-  const hasActiveFilters = activeFilters.sectors.length > 0 
-    || activeFilters.scheduleStatus.length > 0
-    || searchTerm.length > 0;
-
   // Forçar atualização manual
-  const handleRefresh = async () => {
-    setIsLoading(true);
+  const handleRefresh = useCallback(async () => {
+    if (isRefreshing) return;
+    
+    setIsRefreshing(true);
     try {
       if (activeTab === 'completed') {
         await refreshCompletedConversations();
       } else {
         await refreshConversations({});
       }
-      lastRefreshTimeRef.current = Date.now();
+      
+      notificationService.showToast('Conversas atualizadas', 'success');
     } catch (error) {
       console.error('Erro ao atualizar conversas:', error);
+      notificationService.showToast('Erro ao atualizar conversas', 'error');
     } finally {
-      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [activeTab, refreshCompletedConversations, refreshConversations, isRefreshing]);
+  
+  // Navegação para a conversa selecionada
+  const handleSelectConversation = (conversationId) => {
+    selectConversation(conversationId);
+    navigate(`/conversations/${conversationId}`);
+    
+    // Em dispositivos móveis, mostrar a visualização de detalhes
+    if (window.innerWidth < 768) {
+      setIsMobileDetailView(true);
     }
   };
-
-  return (
-    <div className="h-full flex flex-col">
-      {/* Cabeçalho com título, status de conexão e filtros */}
-      <ConversationHeader 
-        searchTerm={searchTerm}
-        onSearchChange={setSearchTerm}
-        onRefresh={handleRefresh}
-        isLoading={isLoading}
-        sectorDisplayName={sectorDisplayName}
-      />
-      
-      {/* Abas de conversas */}
-      <div className="mt-5 flex-1 flex flex-col">
-        <Tabs 
-          defaultValue="all" 
-          onValueChange={handleTabChange}
-          className="flex-1 flex flex-col"
-        >
-          <TabsList className="bg-[#0f1621] mb-4 border border-[#1f2937]/50 p-1">
-            <TabsTrigger 
-              value="all" 
-              className="data-[state=active]:bg-[#10b981] data-[state=active]:text-white"
-            >
-              <MessageSquare className="mr-2 h-4 w-4" />
-              Todas
-            </TabsTrigger>
-            <TabsTrigger 
-              value="waiting" 
-              className="data-[state=active]:bg-[#10b981] data-[state=active]:text-white"
-            >
-              <Clock className="mr-2 h-4 w-4" />
-              Aguardando
-            </TabsTrigger>
-            <TabsTrigger 
-              value="ongoing"
-              className="data-[state=active]:bg-[#10b981] data-[state=active]:text-white" 
-            >
-              <User className="mr-2 h-4 w-4" />
-              Em Andamento
-            </TabsTrigger>
-            <TabsTrigger 
-              value="completed"
-              className="data-[state=active]:bg-[#10b981] data-[state=active]:text-white" 
-            >
-              <CheckCircle2 className="mr-2 h-4 w-4" />
-              Concluídas
-            </TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="all" className="flex-1 mt-0 overflow-auto">
-            <ListaConversas 
-              conversations={filteredConversations}
-              onSelectConversation={handleSelectConversation}
-              isLoading={isLoading}
-              error={loadingError}
-              hasFilters={hasActiveFilters}
-              onClearFilters={clearFilters}
-              userSector={userSector}
-            />
-          </TabsContent>
-          
-          <TabsContent value="waiting" className="flex-1 mt-0 overflow-auto">
-            <ListaConversas 
-              conversations={filteredConversations}
-              onSelectConversation={handleSelectConversation}
-              isLoading={isLoading}
-              error={loadingError}
-              hasFilters={hasActiveFilters}
-              onClearFilters={clearFilters}
-              userSector={userSector}
-            />
-          </TabsContent>
-          
-          <TabsContent value="ongoing" className="flex-1 mt-0 overflow-auto">
-            <ListaConversas 
-              conversations={filteredConversations}
-              onSelectConversation={handleSelectConversation}
-              isLoading={isLoading}
-              error={loadingError}
-              hasFilters={hasActiveFilters}
-              onClearFilters={clearFilters}
-              userSector={userSector}
-            />
-          </TabsContent>
-
-          <TabsContent value="completed" className="flex-1 mt-0 overflow-auto">
-            <ListaConversas 
-              conversations={filteredCompletedConversations}
-              onSelectConversation={handleSelectConversation}
-              isLoading={isLoadingCompleted}
-              error={loadingError}
-              hasFilters={hasActiveFilters}
-              onClearFilters={clearFilters}
-              userSector={userSector}
-              isCompletedTab={true}
-            />
-          </TabsContent>
-        </Tabs>
-      </div>
-    </div>
-  );
-};
-
-// Componente para listar conversas
-const ListaConversas = ({ 
-  conversations, 
-  onSelectConversation, 
-  isLoading,
-  error,
-  hasFilters,
-  onClearFilters,
-  userSector,
-  isCompletedTab = false
-}) => {
-  // Formatação de data/hora
-  const formatLastMessageTime = (timestamp) => {
-    if (!timestamp) return '';
+  
+  // Voltar da visualização de detalhes em dispositivos móveis
+  const handleBackFromDetails = () => {
+    if (window.innerWidth < 768) {
+      setIsMobileDetailView(false);
+      navigate('/conversations');
+    }
+  };
+  
+  // Lidar com envio de mensagem
+  const handleSendMessage = async (conversationId, text) => {
+    return await sendMessage(conversationId, text);
+  };
+  
+  // Mostrar diálogo de transferência
+  const handleShowTransferDialog = (conversationId) => {
+    setShowTransferDialog(true);
+  };
+  
+  // Mostrar diálogo de finalização
+  const handleShowFinishDialog = (conversationId) => {
+    setShowFinishDialog(true);
+  };
+  
+  // Mostrar diálogo de arquivamento
+  const handleShowArchiveDialog = (conversationId) => {
+    setShowArchiveDialog(true);
+  };
+  
+  // Executar transferência
+  const handleConfirmTransfer = async () => {
+    if (!selectedConversation || !selectedSector) return;
     
     try {
-      const date = new Date(timestamp);
-      const now = new Date();
-      const diffMs = now - date;
-      const diffMins = Math.floor(diffMs / (1000 * 60));
+      const success = await transferConversation(selectedConversation._id, selectedSector);
       
-      if (diffMins < 1) return 'Agora';
-      if (diffMins < 60) return `${diffMins}m atrás`;
-      
-      const diffHours = Math.floor(diffMins / 60);
-      if (diffHours < 24) return `${diffHours}h atrás`;
-      
-      const day = date.getDate().toString().padStart(2, '0');
-      const month = (date.getMonth() + 1).toString().padStart(2, '0');
-      return `${day}/${month}`;
+      if (success) {
+        notificationService.showToast('Conversa transferida com sucesso', 'success');
+        setSelectedSector(null);
+        setShowTransferDialog(false);
+        // Voltar à lista em dispositivos móveis
+        if (window.innerWidth < 768) {
+          setIsMobileDetailView(false);
+          navigate('/conversations');
+        }
+      } else {
+        notificationService.showToast('Erro ao transferir conversa', 'error');
+      }
     } catch (error) {
-      return '';
+      console.error('Erro ao transferir conversa:', error);
+      notificationService.showToast('Erro ao transferir conversa', 'error');
     }
   };
   
-  if (error) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center p-6 rounded-lg bg-red-600/10 border border-red-600/30 max-w-md">
-          <h3 className="text-lg font-medium text-red-400 mb-2">Erro ao carregar conversas</h3>
-          <p className="text-sm text-slate-400">{error}</p>
-          <button 
-            onClick={() => window.location.reload()}
-            className="mt-4 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-md flex items-center justify-center gap-2"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-4 w-4"
-            >
-              <path d="M21 2v6h-6"></path>
-              <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
-              <path d="M3 22v-6h6"></path>
-              <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
-            </svg>
-            <span>Tentar novamente</span>
-          </button>
-        </div>
-      </div>
-    );
-  }
+  // Executar finalização
+  const handleConfirmFinish = async () => {
+    if (!selectedConversation) return;
+    
+    try {
+      const success = await finishConversation(selectedConversation._id);
+      
+      if (success) {
+        notificationService.showToast('Conversa finalizada com sucesso', 'success');
+        setShowFinishDialog(false);
+        // Voltar à lista em dispositivos móveis
+        if (window.innerWidth < 768) {
+          setIsMobileDetailView(false);
+          navigate('/conversations');
+        }
+      } else {
+        notificationService.showToast('Erro ao finalizar conversa', 'error');
+      }
+    } catch (error) {
+      console.error('Erro ao finalizar conversa:', error);
+      notificationService.showToast('Erro ao finalizar conversa', 'error');
+    }
+  };
   
-  if (isLoading && conversations.length === 0) {
-    return (
-      <div className="space-y-3">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <div key={index} className="p-4 rounded-lg bg-[#0f1621] border border-[#1f2937]/40 flex items-center gap-3">
-            <Skeleton className="h-10 w-10 rounded-full" />
-            <div className="flex-1">
-              <Skeleton className="h-4 w-40 mb-2 bg-[#1f2937]/60" />
-              <Skeleton className="h-3 w-full bg-[#1f2937]/40" />
-            </div>
-            <Skeleton className="h-3 w-16 bg-[#1f2937]/60" />
-          </div>
-        ))}
-      </div>
-    );
-  }
+  // Executar arquivamento
+  const handleConfirmArchive = async () => {
+    if (!selectedConversation) return;
+    
+    try {
+      const success = await archiveConversation(selectedConversation._id);
+      
+      if (success) {
+        notificationService.showToast('Conversa arquivada com sucesso', 'success');
+        setShowArchiveDialog(false);
+        // Voltar à lista em dispositivos móveis
+        if (window.innerWidth < 768) {
+          setIsMobileDetailView(false);
+          navigate('/conversations');
+        }
+      } else {
+        notificationService.showToast('Erro ao arquivar conversa', 'error');
+      }
+    } catch (error) {
+      console.error('Erro ao arquivar conversa:', error);
+      notificationService.showToast('Erro ao arquivar conversa', 'error');
+    }
+  };
   
-  if (!conversations || conversations.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center max-w-md">
-          <div className="mx-auto w-16 h-16 bg-[#101820]/60 rounded-full flex items-center justify-center mb-4">
-            <MessageSquareOff className="h-8 w-8 text-slate-500" />
-          </div>
-          <h3 className="text-lg font-medium text-white mb-2">
-            {hasFilters 
-              ? 'Nenhuma conversa corresponde aos filtros' 
-              : isCompletedTab
-                ? 'Nenhuma conversa concluída disponível'
-                : 'Nenhuma conversa disponível'}
-          </h3>
-          <p className="text-sm text-slate-400">
-            {hasFilters 
-              ? 'Tente ajustar os filtros de pesquisa para ver mais resultados.' 
-              : isCompletedTab
-                ? 'As conversas finalizadas aparecerão aqui automaticamente.'
-                : 'Novas conversas aparecerão aqui automaticamente.'}
-          </p>
-          
-          {hasFilters && (
-            <button 
-              onClick={onClearFilters}
-              className="mt-4 px-4 py-1.5 border border-[#1f2937]/50 bg-[#0f1621] hover:bg-[#101820] text-slate-300 rounded-md"
-            >
-              Limpar filtros
-            </button>
-          )}
-        </div>
-      </div>
+  // Processar ações do menu
+  const handleConversationAction = (action) => {
+    if (!selectedConversation) return;
+    
+    switch (action) {
+      case 'transferir':
+        handleShowTransferDialog(selectedConversation._id);
+        break;
+      case 'finalizar':
+        handleShowFinishDialog(selectedConversation._id);
+        break;
+      case 'arquivar':
+        handleShowArchiveDialog(selectedConversation._id);
+        break;
+      case 'videoCall':
+        notificationService.showToast('Chamada de vídeo não implementada', 'info');
+        break;
+      case 'voiceCall':
+        notificationService.showToast('Chamada de voz não implementada', 'info');
+        break;
+      default:
+        break;
+    }
+  };
+  
+  // Alternar notificações
+  const handleToggleNotifications = () => {
+    toggleNotifications(!notificationsEnabled);
+    
+    notificationService.showToast(
+      notificationsEnabled ? 'Notificações desativadas' : 'Notificações ativadas',
+      'info'
     );
-  }
+  };
+  
+  // Selecionar quais conversas mostrar com base na aba atual
+  const getActiveConversations = () => {
+    if (activeTab === 'completed') {
+      return completedConversations || [];
+    }
+    
+    if (!conversations) return [];
+    
+    if (activeTab === 'waiting') {
+      return conversations.filter(c => 
+        c.status && c.status.toLowerCase().includes('aguardando')
+      );
+    }
+    
+    if (activeTab === 'ongoing') {
+      return conversations.filter(c => 
+        c.status && c.status.toLowerCase().includes('andamento')
+      );
+    }
+    
+    // Aba "all" - mostrar todas as conversas ativas
+    return conversations;
+  };
 
   return (
-    <div className="space-y-2 pb-6">
-      <AnimatePresence>
-        {conversations.map((conversation) => {
-          // Verificar se a conversa pertence ao setor do usuário
-          const userSectorId = userSector?._id || userSector?.id || '';
-          
-          // Verificar se setorId é objeto ou string
-          const conversationSectorId = typeof conversation.setorId === 'object' && conversation.setorId !== null
-            ? conversation.setorId._id || conversation.setorId.id
-            : conversation.setorId || '';
-            
-          const isUserSector = userSectorId && conversationSectorId && userSectorId === conversationSectorId;
-          
-          return (
-            <ConversationItem
-              key={conversation._id || conversation.id}
-              conversation={conversation}
-              onClick={() => onSelectConversation(conversation._id || conversation.id)}
-              formatLastMessageTime={formatLastMessageTime}
-              isUserSector={isUserSector}
-              isCompleted={isCompletedTab}
+    <div className="h-full w-full flex flex-col">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+        {/* Área de lista de conversas */}
+        {(!isMobileDetailView || !selectedConversation) && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="md:w-1/3 flex-shrink-0 p-4 md:border-r border-gray-800 overflow-auto h-full"
+          >
+            <ConversationsList 
+              conversations={getActiveConversations()}
+              onSelectConversation={handleSelectConversation}
+              isLoading={isLoading || isRefreshing}
+              error={loadingError}
+              onRefresh={handleRefresh}
+              sectors={sectors}
+              userSector={userSector}
+              selectedConversationId={selectedConversation?._id}
+              showNotifications={notificationsEnabled}
+              onToggleNotifications={handleToggleNotifications}
             />
-          );
-        })}
-      </AnimatePresence>
+          </motion.div>
+        )}
+        
+        {/* Área de detalhes da conversa */}
+        {(selectedConversation || isMobileDetailView) && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex-1 p-4 h-full overflow-hidden"
+          >
+            {isMobileDetailView && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="md:hidden mb-4 bg-gray-800 border-gray-700 hover:bg-gray-700 text-gray-300"
+                onClick={handleBackFromDetails}
+              >
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Voltar às conversas
+              </Button>
+            )}
+            
+            <ConversationDetail 
+              conversation={selectedConversation}
+              onBack={handleBackFromDetails}
+              onSendMessage={handleSendMessage}
+              onFinish={handleShowFinishDialog}
+              onTransfer={handleShowTransferDialog}
+              onArchive={handleShowArchiveDialog}
+              onVideoCall={() => handleConversationAction('videoCall')}
+              onVoiceCall={() => handleConversationAction('voiceCall')}
+            />
+          </motion.div>
+        )}
+        
+        {/* Área de espaço reservado quando nenhuma conversa está selecionada */}
+        {!selectedConversation && !isMobileDetailView && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="hidden md:flex flex-1 items-center justify-center p-4"
+          >
+            <div className="text-center">
+              <div className="w-20 h-20 mx-auto mb-4 bg-gray-800/50 rounded-full flex items-center justify-center">
+                <MessageSquareOff className="h-10 w-10 text-gray-500" />
+              </div>
+              <h2 className="text-xl font-semibold text-white mb-2">Nenhuma conversa selecionada</h2>
+              <p className="text-gray-400 max-w-md">
+                Selecione uma conversa na lista para visualizar as mensagens e interagir com o cliente.
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </div>
+      
+      {/* Diálogo de transferência */}
+      <Dialog open={showTransferDialog} onOpenChange={setShowTransferDialog}>
+        <DialogContent className="bg-gray-800 text-white border-gray-700">
+          <DialogHeader>
+            <DialogTitle>Transferir conversa</DialogTitle>
+          </DialogHeader>
+          
+          <div className="py-4">
+            <p className="text-gray-300 mb-4">
+              Selecione o setor para o qual deseja transferir esta conversa:
+            </p>
+            
+            <div className="grid grid-cols-1 gap-2 max-h-[300px] overflow-auto">
+              {sectors && sectors.map(sector => (
+                <button
+                  key={sector._id || sector.id}
+                  className={`p-3 rounded-lg border text-left transition-colors
+                    ${selectedSector === (sector._id || sector.id)
+                      ? 'bg-[#10b981]/20 border-[#10b981] text-white'
+                      : 'bg-gray-700/30 border-gray-700 text-gray-300 hover:bg-gray-700/50'
+                    }
+                  `}
+                  onClick={() => setSelectedSector(sector._id || sector.id)}
+                >
+                  <div className="font-medium">{sector.nome}</div>
+                  {sector.responsavel && (
+                    <div className="text-sm text-gray-400">
+                      Responsável: {sector.responsavel}
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button 
+              variant="outline"
+              onClick={() => setShowTransferDialog(false)}
+              className="bg-transparent border-gray-600 text-gray-300 hover:bg-gray-700"
+            >
+              <X className="h-4 w-4 mr-2" />
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleConfirmTransfer}
+              disabled={!selectedSector}
+              className="bg-[#10b981] hover:bg-[#0d8e6a] text-white"
+            >
+              <Share className="h-4 w-4 mr-2" />
+              Transferir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Diálogo de finalização */}
+      <Dialog open={showFinishDialog} onOpenChange={setShowFinishDialog}>
+        <DialogContent className="bg-gray-800 text-white border-gray-700">
+          <DialogHeader>
+            <DialogTitle>Finalizar conversa</DialogTitle>
+          </DialogHeader>
+          
+          <div className="py-4">
+            <p className="text-gray-300">
+              Tem certeza que deseja finalizar esta conversa?
+              A conversa será movida para a lista de conversas concluídas.
+            </p>
+          </div>
+          
+          <DialogFooter>
+            <Button 
+              variant="outline"
+              onClick={() => setShowFinishDialog(false)}
+              className="bg-transparent border-gray-600 text-gray-300 hover:bg-gray-700"
+            >
+              <X className="h-4 w-4 mr-2" />
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleConfirmFinish}
+              className="bg-[#10b981] hover:bg-[#0d8e6a] text-white"
+            >
+              <Check className="h-4 w-4 mr-2" />
+              Finalizar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Diálogo de arquivamento */}
+      <Dialog open={showArchiveDialog} onOpenChange={setShowArchiveDialog}>
+        <DialogContent className="bg-gray-800 text-white border-gray-700">
+          <DialogHeader>
+            <DialogTitle>Arquivar conversa</DialogTitle>
+          </DialogHeader>
+          
+          <div className="py-4">
+            <p className="text-gray-300">
+              Tem certeza que deseja arquivar esta conversa?
+              Conversas arquivadas não serão mais exibidas em nenhuma lista.
+            </p>
+          </div>
+          
+          <DialogFooter>
+            <Button 
+              variant="outline"
+              onClick={() => setShowArchiveDialog(false)}
+              className="bg-transparent border-gray-600 text-gray-300 hover:bg-gray-700"
+            >
+              <X className="h-4 w-4 mr-2" />
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleConfirmArchive}
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              <Check className="h-4 w-4 mr-2" />
+              Arquivar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

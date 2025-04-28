@@ -82,6 +82,70 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
   // Determinar quais itens de menu mostrar
   const menuItems = isAdmin ? [...regularUserItems, ...adminItems] : regularUserItems;
 
+  // Renderizar cada item do menu com ou sem tooltip baseado no estado de colapso
+  const renderMenuItem = (item) => {
+    const menuItemContent = (
+      <li 
+        onClick={() => handleNavigation(item.path)}
+        className={`
+          flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer
+          transition-all duration-200 group
+          ${item.active 
+            ? 'bg-[#10b981]/10 text-[#10b981]' 
+            : 'text-slate-400 hover:bg-[#101820] hover:text-white'}
+        `}
+      >
+        <div className={`
+          flex-shrink-0 transition-all duration-200
+          ${item.active ? 'text-[#10b981]' : 'text-slate-400 group-hover:text-white'}
+        `}>
+          {item.icon}
+        </div>
+        
+        {!collapsed && (
+          <motion.span 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="text-sm font-medium transition-all"
+          >
+            {item.label}
+          </motion.span>
+        )}
+        
+        {!collapsed && item.active && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.6 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="ml-auto h-2 w-2 rounded-full bg-[#10b981]"
+          />
+        )}
+      </li>
+    );
+
+    // Se o menu estiver colapsado, usar tooltip
+    if (collapsed) {
+      return (
+        <TooltipProvider key={item.id} delayDuration={150}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              {menuItemContent}
+            </TooltipTrigger>
+            <TooltipContent side="right" className="bg-[#0f1621] text-white border-[#1f2937]/40">
+              {item.label}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      );
+    }
+
+    // Se não estiver colapsado, retornar o item sem tooltip
+    return (
+      <div key={item.id}>
+        {menuItemContent}
+      </div>
+    );
+  };
+
   return (
     <div className="h-full flex flex-col bg-[#070b11] border-r border-[#1f2937]/40 shadow-lg">
       {/* Header */}
@@ -136,54 +200,7 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
       {/* Menu Items */}
       <nav className="mt-5 flex-1 px-3">
         <ul className="space-y-1">
-          {menuItems.map((item) => (
-            <TooltipProvider key={item.id} delayDuration={150}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <li 
-                    onClick={() => handleNavigation(item.path)}
-                    className={`
-                      flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer
-                      transition-all duration-200 group
-                      ${item.active 
-                        ? 'bg-[#10b981]/10 text-[#10b981]' 
-                        : 'text-slate-400 hover:bg-[#101820] hover:text-white'}
-                    `}
-                  >
-                    <div className={`
-                      flex-shrink-0 transition-all duration-200
-                      ${item.active ? 'text-[#10b981]' : 'text-slate-400 group-hover:text-white'}
-                    `}>
-                      {item.icon}
-                    </div>
-                    
-                    {!collapsed && (
-                      <motion.span 
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="text-sm font-medium transition-all"
-                      >
-                        {item.label}
-                      </motion.span>
-                    )}
-                    
-                    {!collapsed && item.active && (
-                      <motion.div 
-                        initial={{ opacity: 0, scale: 0.6 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="ml-auto h-2 w-2 rounded-full bg-[#10b981]"
-                      />
-                    )}
-                  </li>
-                </TooltipTrigger>
-                {collapsed && (
-                  <TooltipContent side="right" className="bg-[#0f1621] text-white border-[#1f2937]/40">
-                    {item.label}
-                  </TooltipContent>
-                )}
-              </Tooltip>
-            </TooltipProvider>
-          ))}
+          {menuItems.map(item => renderMenuItem(item))}
         </ul>
       </nav>
 

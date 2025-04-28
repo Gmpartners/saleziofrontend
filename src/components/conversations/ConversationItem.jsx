@@ -1,169 +1,120 @@
 import React from 'react';
-import { motion } from 'framer-motion';
-import { UserCircle2, Clock, CheckCircle, MessageCircle, Check, CheckCheck } from 'lucide-react';
+import { UserCircle, Circle, CheckCircle } from 'lucide-react';
+import { formatDistance } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
-/**
- * Componente de item de conversa para a lista de conversas
- */
-const ConversationItem = ({ 
-  conversation, 
-  onClick, 
-  formatLastMessageTime, 
-  isUserSector = false,
-  isCompleted = false 
-}) => {
-  if (!conversation) return null;
-  
+const ConversationItem = ({ conversation, isSelected, onClick }) => {
   // Extrair dados da conversa
   const {
-    _id,
-    nomeCliente = 'Cliente',
-    telefoneCliente = '',
-    ultimaMensagem = '',
+    nomeCliente,
+    telefoneCliente,
+    ultimaMensagem,
     ultimaAtividade,
-    status = '',
-    setorId,
-    mensagens = [],
     unreadCount = 0,
+    setorId,
+    status,
     lastMessageRead = true
   } = conversation;
   
-  // Formatar o nome do cliente
-  const formattedName = nomeCliente || conversation.cliente?.nome || 'Cliente';
+  // Formatação de nome
+  const displayName = nomeCliente || 'Cliente';
+  const initials = displayName
+    .split(' ')
+    .slice(0, 2)
+    .map(name => name && name[0])
+    .filter(Boolean)
+    .join('')
+    .toUpperCase();
   
-  // Formatar o telefone
-  const formattedPhone = telefoneCliente || conversation.cliente?.telefone || '';
+  // Formatação de hora
+  const formattedTime = ultimaAtividade
+    ? formatDistance(new Date(ultimaAtividade), new Date(), { 
+        addSuffix: true,
+        locale: ptBR
+      })
+    : '';
   
-  // Determinar o texto de status
-  const getStatusBadge = () => {
-    const statusLower = status.toLowerCase();
+  // Status da conversa
+  const getStatusIndicator = () => {
+    const statusLower = (status || '').toLowerCase();
     
     if (statusLower.includes('aguardando')) {
-      return (
-        <span className="inline-flex items-center gap-1 text-amber-400 text-xs font-medium">
-          <Clock className="h-3 w-3" />
-          <span>Aguardando</span>
-        </span>
-      );
+      return <Circle className="h-3 w-3 text-amber-400" fill="#f59e0b" />;
     } else if (statusLower.includes('andamento')) {
-      return (
-        <span className="inline-flex items-center gap-1 text-green-400 text-xs font-medium">
-          <MessageCircle className="h-3 w-3" />
-          <span>Em atendimento</span>
-        </span>
-      );
-    } else if (statusLower.includes('finalizada') || isCompleted) {
-      return (
-        <span className="inline-flex items-center gap-1 text-blue-400 text-xs font-medium">
-          <CheckCircle className="h-3 w-3" />
-          <span>Finalizada</span>
-        </span>
-      );
+      return <Circle className="h-3 w-3 text-green-400" fill="#10b981" />;
+    } else if (statusLower.includes('finalizada')) {
+      return <CheckCircle className="h-3 w-3 text-blue-400" />;
     }
     
     return null;
   };
   
-  // Determinar nome do setor
-  const getSectorName = () => {
-    if (typeof setorId === 'object' && setorId) {
-      return setorId.nome || 'Setor';
-    }
-    return 'Setor';
-  };
-  
-  // Preparar dados para animação
-  const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.3 } }
-  };
+  // Status da leitura da mensagem
+  const readStatusColor = lastMessageRead ? 'text-gray-400' : 'text-[#10b981]';
 
-  // Verificar se há mensagens não lidas
-  const hasUnreadMessages = unreadCount > 0 || !lastMessageRead;
-  
   return (
-    <motion.div
-      variants={itemVariants}
-      initial="hidden"
-      animate="visible"
-      exit="hidden"
-      layout
-      onClick={() => onClick(_id)}
-      className={`p-3 rounded-lg cursor-pointer transition-colors hover:bg-[#101820] relative ${
-        hasUnreadMessages ? 'bg-[#0a2038] border border-[#10b981]/30' : 
-        isUserSector ? 'bg-[#0f1621] border border-[#10b981]/30' : 'bg-[#0f1621] border border-[#1f2937]/40'
+    <div
+      onClick={onClick}
+      className={`flex p-3 items-center gap-3 cursor-pointer transition-colors ${
+        isSelected
+          ? 'bg-[#1a2435]'
+          : 'hover:bg-[#15202b]'
       }`}
     >
-      {/* Indicador de mensagens não lidas */}
-      {hasUnreadMessages && (
-        <span className="absolute top-3 right-3 h-2.5 w-2.5 bg-[#10b981] rounded-full"></span>
-      )}
-      
-      <div className="flex gap-3">
-        {/* Avatar */}
-        <div className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden ${
-          hasUnreadMessages ? 'bg-[#10b981]/20 text-[#10b981]' :
-          isUserSector ? 'bg-[#10b981]/10 text-[#10b981]' : 'bg-[#0c1118] text-slate-400'
+      {/* Avatar */}
+      <div className="relative">
+        <div className={`h-10 w-10 rounded-full flex items-center justify-center text-white ${
+          isSelected
+            ? 'bg-gradient-to-br from-[#10b981] to-[#0d8e6a]'
+            : 'bg-[#1a2435]'
         }`}>
-          <UserCircle2 className="h-6 w-6" />
+          {nomeCliente ? (
+            <span className="text-sm font-medium">{initials}</span>
+          ) : (
+            <UserCircle className="h-6 w-6" />
+          )}
         </div>
         
-        {/* Conteúdo */}
-        <div className="flex-1 min-w-0">
-          <div className="flex justify-between items-start">
-            {/* Nome do cliente */}
-            <h3 className={`font-medium truncate ${hasUnreadMessages ? 'text-[#10b981]' : 'text-white'}`}>
-              {formattedName}
-            </h3>
-            
-            {/* Timestamp */}
-            <span className="text-xs text-slate-400 whitespace-nowrap ml-2">
-              {formatLastMessageTime(ultimaAtividade)}
-            </span>
-          </div>
-          
-          {/* Telefone */}
-          {formattedPhone && (
-            <div className="text-xs text-slate-500 mb-1">{formattedPhone}</div>
-          )}
-          
-          {/* Última mensagem */}
-          <p className={`text-sm truncate mb-1 ${hasUnreadMessages ? 'text-white font-medium' : 'text-slate-300'}`}>
-            {ultimaMensagem}
-          </p>
-          
-          {/* Badges */}
-          <div className="flex justify-between items-center">
-            {getStatusBadge()}
-            
-            {/* Setor */}
-            <div className="flex items-center gap-2">
-              {/* Status de leitura */}
-              {!isCompleted && (
-                <span className="text-xs">
-                  {lastMessageRead ? (
-                    <CheckCheck className="h-3 w-3 text-blue-400" />
-                  ) : (
-                    <Check className="h-3 w-3 text-slate-400" />
-                  )}
-                </span>
-              )}
-              
-              {/* Contador de mensagens não lidas */}
-              {unreadCount > 0 && (
-                <span className="text-xs px-1.5 py-0.5 rounded-full bg-[#10b981] text-white">
-                  {unreadCount}
-                </span>
-              )}
-              
-              <span className="text-xs px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-300">
-                {getSectorName()}
-              </span>
-            </div>
-          </div>
+        {/* Indicador de status */}
+        <div className="absolute bottom-0 right-0">
+          {getStatusIndicator()}
         </div>
       </div>
-    </motion.div>
+      
+      {/* Conteúdo */}
+      <div className="flex-1 min-w-0">
+        <div className="flex justify-between items-start">
+          <h3 className="text-sm font-medium text-white truncate pr-2">
+            {displayName}
+          </h3>
+          <span className={`text-xs ${readStatusColor} whitespace-nowrap`}>
+            {formattedTime}
+          </span>
+        </div>
+        
+        <div className="flex justify-between items-center mt-1">
+          <p className="text-xs text-gray-400 truncate pr-2">
+            {ultimaMensagem || telefoneCliente || 'Nova conversa iniciada'}
+          </p>
+          
+          {/* Indicador de mensagens não lidas */}
+          {unreadCount > 0 && (
+            <span className="bg-[#10b981] text-white text-xs font-medium h-5 min-w-5 rounded-full flex items-center justify-center px-1.5">
+              {unreadCount}
+            </span>
+          )}
+        </div>
+        
+        {/* Tag de setor */}
+        {setorId?.nome && (
+          <div className="mt-1.5">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1f2937] text-gray-300">
+              {setorId.nome}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
   );
 };
 
