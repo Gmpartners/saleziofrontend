@@ -3,7 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { SocketProvider } from '../contexts/SocketContext';
 
 // Páginas
-import AnalyticsPage from '../pages/AnalyticsPage';
+import AnalyticsPage from '../pages/Analytics/AnalyticsPage
 import ConversationsPage from '../pages/ConversationsPage';
 import NotificationsPage from '../pages/NotificationsPage';
 import SettingsPage from '../pages/SettingsPage';
@@ -27,9 +27,7 @@ const AppRoutes = () => {
       {/* Rotas autenticadas */}
       <Route element={<ProtectedRoute />}>
         <Route element={
-          <SocketProvider>
-            <AppLayout />
-          </SocketProvider>
+          <AppLayout />
         }>
           <Route path="/" element={<Navigate to="/conversations" replace />} />
           <Route path="/conversations" element={<ConversationsPage />} />
