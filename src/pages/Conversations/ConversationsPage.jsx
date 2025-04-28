@@ -1,63 +1,58 @@
 // pages/Conversations/ConversationsPage.jsx
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, RefreshCw, Clock, MessageSquare, User, MessageSquareOff, Phone } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { format, isSameDay, isToday, isYesterday } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { Filter, Clock, MessageSquare, User, MessageSquareOff, CheckCircle2 } from 'lucide-react';
 
 // Contexts e Hooks
 import { useSocket } from '../../contexts/SocketContext';
 import { useAuthContext } from '../../hooks/useAuthContext';
 
 // Components
-import ConnectionStatus from '../../components/ConnectionStatus';
-import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar';
 import { Badge } from '../../components/ui/badge';
-import { Button } from '../../components/ui/button';
-import { Input } from '../../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Skeleton } from '../../components/ui/skeleton';
-import { 
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '../../components/ui/dropdown-menu';
+import ConversationHeader from '../../components/conversations/ConversationHeader';
+import ConversationItem from '../../components/conversations/ConversationItem';
+
+// Constants
+import { MultiFlowStatusMap } from '../../contexts/SocketContext';
 
 const ConversationsPage = () => {
   const navigate = useNavigate();
   const { userProfile, userSector, userSectorName, sectors } = useAuthContext();
   const { 
     conversations, 
+    completedConversations,
     selectConversation, 
     refreshConversations,
+    refreshCompletedConversations,
     isConnected,
-    socketService
+    hasUnreadMessages,
+    clearUnreadMessages
   } = useSocket();
   
   const [activeTab, setActiveTab] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingCompleted, setIsLoadingCompleted] = useState(true);
   const [loadingError, setLoadingError] = useState(null);
   const [filteredConversations, setFilteredConversations] = useState([]);
+  const [filteredCompletedConversations, setFilteredCompletedConversations] = useState([]);
   const [activeFilters, setActiveFilters] = useState({
     sectors: [],
     scheduleStatus: []
   });
   
-  // Referência para depuração
-  const debugRef = useRef(false);
+  // Referência para o último tempo de atualização
+  const lastRefreshTimeRef = useRef(Date.now());
   
-  // Log para debug - apenas na primeira vez
+  // Limpar flag de mensagens não lidas quando a página é visualizada
   useEffect(() => {
-    if (!debugRef.current && conversations && conversations.length > 0) {
-      debugRef.current = true;
-      console.log("Exemplo de conversa:", conversations[0]);
+    if (hasUnreadMessages) {
+      clearUnreadMessages();
     }
-  }, [conversations]);
+  }, [hasUnreadMessages, clearUnreadMessages]);
   
   // Filtrar e agrupar conversas
   useEffect(() => {
@@ -105,23 +100,68 @@ const ConversationsPage = () => {
         return true;
       });
       
+      // Ordenar por última atividade (mais recente primeiro)
+      filtered.sort((a, b) => {
+        const aTime = new Date(a.ultimaAtividade || a.criadoEm || 0).getTime();
+        const bTime = new Date(b.ultimaAtividade || b.criadoEm || 0).getTime();
+        return bTime - aTime;
+      });
+      
       setFilteredConversations(filtered);
     }
   }, [conversations, searchTerm, activeTab, activeFilters]);
-  
-  // Carregar conversas iniciais e configurar atualização periódica
+
+  // Filtrar e agrupar conversas concluídas
   useEffect(() => {
-    setIsLoading(true);
-    setLoadingError(null);
-    
-    // Função de carregamento
-    const loadConversations = async () => {
-      try {
-        // MODIFICAÇÃO: Não usar nenhum filtro adicional, exibir todas as conversas
-        const success = await refreshConversations({});
-        if (!success) {
-          setLoadingError('Não foi possível carregar as conversas. O servidor pode estar indisponível.');
+    if (completedConversations) {
+      setIsLoadingCompleted(false);
+      
+      // Aplicar filtros às conversas concluídas
+      const filtered = completedConversations.filter(conv => {
+        // Verificar se a conversa é válida
+        if (!conv || (typeof conv !== 'object')) return false;
+        
+        // Filtro de pesquisa
+        const searchTermLower = searchTerm.toLowerCase();
+        const matchesSearch = !searchTerm || 
+          (conv.nomeCliente?.toLowerCase()?.includes(searchTermLower)) ||
+          (conv.cliente?.nome?.toLowerCase()?.includes(searchTermLower)) ||
+          (conv.cliente?.telefone?.includes(searchTerm)) ||
+          (conv.telefoneCliente?.includes(searchTerm)) ||
+          (conv.ultimaMensagem?.toLowerCase()?.includes(searchTermLower));
+        
+        if (!matchesSearch) return false;
+        
+        // Filtro por setor (apenas se houver filtros ativos)
+        if (activeFilters.sectors.length > 0) {
+          const setorId = conv.setorId?._id || conv.setorId;
+          if (!setorId || !activeFilters.sectors.includes(setorId)) return false;
         }
+        
+        return true;
+      });
+      
+      // Ordenar por última atividade (mais recente primeiro)
+      filtered.sort((a, b) => {
+        const aTime = new Date(a.ultimaAtividade || a.criadoEm || 0).getTime();
+        const bTime = new Date(b.ultimaAtividade || b.criadoEm || 0).getTime();
+        return bTime - aTime;
+      });
+      
+      setFilteredCompletedConversations(filtered);
+    }
+  }, [completedConversations, searchTerm, activeFilters]);
+  
+  // Carregar conversas iniciais
+  useEffect(() => {
+    const loadConversations = async () => {
+      setIsLoading(true);
+      setLoadingError(null);
+      
+      try {
+        // Não usar nenhum filtro adicional, mostrar todas as conversas
+        await refreshConversations({});
+        lastRefreshTimeRef.current = Date.now();
       } catch (error) {
         console.error('Erro ao carregar conversas:', error);
         setLoadingError('Não foi possível carregar as conversas. Tente novamente.');
@@ -130,47 +170,32 @@ const ConversationsPage = () => {
       }
     };
     
-    // Carregar imediatamente
+    // Carregar apenas na montagem do componente
     loadConversations();
-    
-    // Configurar atualização periódica (a cada 30 segundos)
-    const intervalId = setInterval(loadConversations, 30000);
-    
-    return () => clearInterval(intervalId);
   }, [refreshConversations]);
+
+  // Carregar conversas concluídas ao selecionar a aba
+  useEffect(() => {
+    const loadCompletedConversations = async () => {
+      if (activeTab === 'completed' && (!completedConversations || completedConversations.length === 0)) {
+        setIsLoadingCompleted(true);
+        try {
+          await refreshCompletedConversations();
+        } catch (error) {
+          console.error('Erro ao carregar conversas concluídas:', error);
+        } finally {
+          setIsLoadingCompleted(false);
+        }
+      }
+    };
+
+    loadCompletedConversations();
+  }, [activeTab, completedConversations, refreshCompletedConversations]);
   
   // Navegação para a conversa selecionada
   const handleSelectConversation = (conversationId) => {
     selectConversation(conversationId);
     navigate(`/conversations/${conversationId}`);
-  };
-  
-  // Aplicar filtro de setor
-  const toggleSectorFilter = (sectorId) => {
-    setActiveFilters(prev => {
-      const sectors = prev.sectors.includes(sectorId)
-        ? prev.sectors.filter(id => id !== sectorId)
-        : [...prev.sectors, sectorId];
-      
-      return {
-        ...prev,
-        sectors
-      };
-    });
-  };
-  
-  // Aplicar filtro de status de agendamento
-  const toggleScheduleStatusFilter = (status) => {
-    setActiveFilters(prev => {
-      const scheduleStatus = prev.scheduleStatus.includes(status)
-        ? prev.scheduleStatus.filter(s => s !== status)
-        : [...prev.scheduleStatus, status];
-      
-      return {
-        ...prev,
-        scheduleStatus
-      };
-    });
   };
   
   // Limpar todos os filtros
@@ -179,37 +204,36 @@ const ConversationsPage = () => {
       sectors: [],
       scheduleStatus: []
     });
-  };
-  
-  // Formatar data de última mensagem
-  const formatLastMessageTime = (timestamp) => {
-    if (!timestamp) return '';
-    
-    const date = new Date(timestamp);
-    
-    if (isToday(date)) {
-      return format(date, "'Hoje,' HH:mm", { locale: ptBR });
-    } else if (isYesterday(date)) {
-      return format(date, "'Ontem,' HH:mm", { locale: ptBR });
-    } else if (isSameDay(date, new Date())) {
-      return format(date, "HH:mm", { locale: ptBR });
-    } else {
-      return format(date, "dd/MM/yyyy", { locale: ptBR });
-    }
+    setSearchTerm('');
   };
 
+  // Verificar mudança de aba
+  const handleTabChange = (value) => {
+    setActiveTab(value);
+    // Se selecionar a aba de conversas concluídas e ainda não tiver carregado, carregar
+    if (value === 'completed' && (!completedConversations || completedConversations.length === 0)) {
+      refreshCompletedConversations();
+    }
+  };
+  
   // O nome de exibição para o setor
-  const sectorDisplayName = userSectorName || (userSector?.nome) || 'Financeiro';
+  const sectorDisplayName = userSectorName || (userSector?.nome) || 'Todas as Conversas';
   
   // Verificar se há filtros ativos
-  const hasActiveFilters = activeFilters.sectors.length > 0 || activeFilters.scheduleStatus.length > 0;
+  const hasActiveFilters = activeFilters.sectors.length > 0 
+    || activeFilters.scheduleStatus.length > 0
+    || searchTerm.length > 0;
 
   // Forçar atualização manual
   const handleRefresh = async () => {
     setIsLoading(true);
     try {
-      // MODIFICAÇÃO: Não usar nenhum filtro adicional, exibir todas as conversas
-      await refreshConversations({});
+      if (activeTab === 'completed') {
+        await refreshCompletedConversations();
+      } else {
+        await refreshConversations({});
+      }
+      lastRefreshTimeRef.current = Date.now();
     } catch (error) {
       console.error('Erro ao atualizar conversas:', error);
     } finally {
@@ -219,102 +243,103 @@ const ConversationsPage = () => {
 
   return (
     <div className="h-full flex flex-col">
-      {/* Título e Status de Conexão */}
-      <ConnectionStatus setor={sectorDisplayName} />
-      
-      {/* Filtros e Pesquisa */}
-      <div className="my-5 flex flex-col sm:flex-row gap-3 sm:items-center">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-500" />
-          <Input
-            type="text"
-            placeholder="Procurar por nome, telefone ou mensagem..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 bg-[#1e1d2b]/60 backdrop-blur-sm border-[#32304a] text-white placeholder-gray-500 h-10"
-          />
-        </div>
-        
-        <div className="flex gap-2">
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="h-10 border-[#32304a] bg-[#1e1d2b]/60 text-gray-400 hover:text-white hover:bg-[#32304a]"
-            onClick={handleRefresh}
-            disabled={isLoading}
-          >
-            <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-            Atualizar
-          </Button>
-        </div>
-      </div>
+      {/* Cabeçalho com título, status de conexão e filtros */}
+      <ConversationHeader 
+        searchTerm={searchTerm}
+        onSearchChange={setSearchTerm}
+        onRefresh={handleRefresh}
+        isLoading={isLoading}
+        sectorDisplayName={sectorDisplayName}
+      />
       
       {/* Abas de conversas */}
-      <Tabs 
-        defaultValue="all" 
-        onValueChange={setActiveTab}
-        className="flex-1 flex flex-col"
-      >
-        <TabsList className="bg-[#1e1d2b]/60 mb-4 border border-[#32304a] p-1">
-          <TabsTrigger 
-            value="all" 
-            className="data-[state=active]:bg-green-600 data-[state=active]:text-white"
-          >
-            <MessageSquare className="mr-2 h-4 w-4" />
-            Todas
-          </TabsTrigger>
-          <TabsTrigger 
-            value="waiting" 
-            className="data-[state=active]:bg-green-600 data-[state=active]:text-white"
-          >
-            <Clock className="mr-2 h-4 w-4" />
-            Aguardando
-          </TabsTrigger>
-          <TabsTrigger 
-            value="ongoing"
-            className="data-[state=active]:bg-green-600 data-[state=active]:text-white" 
-          >
-            <User className="mr-2 h-4 w-4" />
-            Em Andamento
-          </TabsTrigger>
-        </TabsList>
-        
-        <TabsContent value="all" className="flex-1 mt-0">
-          <ListaConversas 
-            conversations={filteredConversations} 
-            onSelectConversation={handleSelectConversation}
-            formatLastMessageTime={formatLastMessageTime}
-            isLoading={isLoading}
-            error={loadingError}
-            sectors={sectors || []}
-            userSector={userSector} // Passando o userSector como prop
-          />
-        </TabsContent>
-        
-        <TabsContent value="waiting" className="flex-1 mt-0">
-          <ListaConversas 
-            conversations={filteredConversations} 
-            onSelectConversation={handleSelectConversation}
-            formatLastMessageTime={formatLastMessageTime}
-            isLoading={isLoading}
-            error={loadingError}
-            sectors={sectors || []}
-            userSector={userSector} // Passando o userSector como prop
-          />
-        </TabsContent>
-        
-        <TabsContent value="ongoing" className="flex-1 mt-0">
-          <ListaConversas 
-            conversations={filteredConversations} 
-            onSelectConversation={handleSelectConversation}
-            formatLastMessageTime={formatLastMessageTime}
-            isLoading={isLoading}
-            error={loadingError}
-            sectors={sectors || []}
-            userSector={userSector} // Passando o userSector como prop
-          />
-        </TabsContent>
-      </Tabs>
+      <div className="mt-5 flex-1 flex flex-col">
+        <Tabs 
+          defaultValue="all" 
+          onValueChange={handleTabChange}
+          className="flex-1 flex flex-col"
+        >
+          <TabsList className="bg-[#0f1621] mb-4 border border-[#1f2937]/50 p-1">
+            <TabsTrigger 
+              value="all" 
+              className="data-[state=active]:bg-[#10b981] data-[state=active]:text-white"
+            >
+              <MessageSquare className="mr-2 h-4 w-4" />
+              Todas
+            </TabsTrigger>
+            <TabsTrigger 
+              value="waiting" 
+              className="data-[state=active]:bg-[#10b981] data-[state=active]:text-white"
+            >
+              <Clock className="mr-2 h-4 w-4" />
+              Aguardando
+            </TabsTrigger>
+            <TabsTrigger 
+              value="ongoing"
+              className="data-[state=active]:bg-[#10b981] data-[state=active]:text-white" 
+            >
+              <User className="mr-2 h-4 w-4" />
+              Em Andamento
+            </TabsTrigger>
+            <TabsTrigger 
+              value="completed"
+              className="data-[state=active]:bg-[#10b981] data-[state=active]:text-white" 
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Concluídas
+            </TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="all" className="flex-1 mt-0 overflow-auto">
+            <ListaConversas 
+              conversations={filteredConversations}
+              onSelectConversation={handleSelectConversation}
+              isLoading={isLoading}
+              error={loadingError}
+              hasFilters={hasActiveFilters}
+              onClearFilters={clearFilters}
+              userSector={userSector}
+            />
+          </TabsContent>
+          
+          <TabsContent value="waiting" className="flex-1 mt-0 overflow-auto">
+            <ListaConversas 
+              conversations={filteredConversations}
+              onSelectConversation={handleSelectConversation}
+              isLoading={isLoading}
+              error={loadingError}
+              hasFilters={hasActiveFilters}
+              onClearFilters={clearFilters}
+              userSector={userSector}
+            />
+          </TabsContent>
+          
+          <TabsContent value="ongoing" className="flex-1 mt-0 overflow-auto">
+            <ListaConversas 
+              conversations={filteredConversations}
+              onSelectConversation={handleSelectConversation}
+              isLoading={isLoading}
+              error={loadingError}
+              hasFilters={hasActiveFilters}
+              onClearFilters={clearFilters}
+              userSector={userSector}
+            />
+          </TabsContent>
+
+          <TabsContent value="completed" className="flex-1 mt-0 overflow-auto">
+            <ListaConversas 
+              conversations={filteredCompletedConversations}
+              onSelectConversation={handleSelectConversation}
+              isLoading={isLoadingCompleted}
+              error={loadingError}
+              hasFilters={hasActiveFilters}
+              onClearFilters={clearFilters}
+              userSector={userSector}
+              isCompletedTab={true}
+            />
+          </TabsContent>
+        </Tabs>
+      </div>
     </div>
   );
 };
@@ -323,41 +348,80 @@ const ConversationsPage = () => {
 const ListaConversas = ({ 
   conversations, 
   onSelectConversation, 
-  formatLastMessageTime,
   isLoading,
   error,
-  sectors,
-  userSector // Recebendo userSector como prop
+  hasFilters,
+  onClearFilters,
+  userSector,
+  isCompletedTab = false
 }) => {
+  // Formatação de data/hora
+  const formatLastMessageTime = (timestamp) => {
+    if (!timestamp) return '';
+    
+    try {
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diffMs = now - date;
+      const diffMins = Math.floor(diffMs / (1000 * 60));
+      
+      if (diffMins < 1) return 'Agora';
+      if (diffMins < 60) return `${diffMins}m atrás`;
+      
+      const diffHours = Math.floor(diffMins / 60);
+      if (diffHours < 24) return `${diffHours}h atrás`;
+      
+      const day = date.getDate().toString().padStart(2, '0');
+      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+      return `${day}/${month}`;
+    } catch (error) {
+      return '';
+    }
+  };
+  
   if (error) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center p-6 rounded-lg bg-red-600/10 border border-red-600/30 max-w-md">
           <h3 className="text-lg font-medium text-red-400 mb-2">Erro ao carregar conversas</h3>
-          <p className="text-sm text-gray-400">{error}</p>
-          <Button 
-            variant="destructive" 
-            className="mt-4 bg-red-600 hover:bg-red-700"
+          <p className="text-sm text-slate-400">{error}</p>
+          <button 
             onClick={() => window.location.reload()}
+            className="mt-4 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-md flex items-center justify-center gap-2"
           >
-            <RefreshCw className="mr-2 h-4 w-4" /> Tentar novamente
-          </Button>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-4 w-4"
+            >
+              <path d="M21 2v6h-6"></path>
+              <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+              <path d="M3 22v-6h6"></path>
+              <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+            </svg>
+            <span>Tentar novamente</span>
+          </button>
         </div>
       </div>
     );
   }
   
-  if (isLoading) {
+  if (isLoading && conversations.length === 0) {
     return (
       <div className="space-y-3">
         {Array.from({ length: 5 }).map((_, index) => (
-          <div key={index} className="p-4 rounded-xl bg-[#1e1d2b]/60 border border-[#32304a]/40 flex items-center gap-3">
+          <div key={index} className="p-4 rounded-lg bg-[#0f1621] border border-[#1f2937]/40 flex items-center gap-3">
             <Skeleton className="h-10 w-10 rounded-full" />
             <div className="flex-1">
-              <Skeleton className="h-4 w-40 mb-2 bg-[#32304a]/60" />
-              <Skeleton className="h-3 w-full bg-[#32304a]/40" />
+              <Skeleton className="h-4 w-40 mb-2 bg-[#1f2937]/60" />
+              <Skeleton className="h-3 w-full bg-[#1f2937]/40" />
             </div>
-            <Skeleton className="h-3 w-16 bg-[#32304a]/60" />
+            <Skeleton className="h-3 w-16 bg-[#1f2937]/60" />
           </div>
         ))}
       </div>
@@ -368,71 +432,42 @@ const ListaConversas = ({
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center max-w-md">
-          <div className="mx-auto w-16 h-16 bg-[#32304a]/40 rounded-full flex items-center justify-center mb-4">
-            <MessageSquareOff className="h-8 w-8 text-gray-500" />
+          <div className="mx-auto w-16 h-16 bg-[#101820]/60 rounded-full flex items-center justify-center mb-4">
+            <MessageSquareOff className="h-8 w-8 text-slate-500" />
           </div>
-          <h3 className="text-lg font-medium text-white mb-2">Nenhuma conversa encontrada</h3>
-          <p className="text-sm text-gray-400">
-            Não há conversas disponíveis no momento. Novas conversas aparecerão aqui automaticamente.
+          <h3 className="text-lg font-medium text-white mb-2">
+            {hasFilters 
+              ? 'Nenhuma conversa corresponde aos filtros' 
+              : isCompletedTab
+                ? 'Nenhuma conversa concluída disponível'
+                : 'Nenhuma conversa disponível'}
+          </h3>
+          <p className="text-sm text-slate-400">
+            {hasFilters 
+              ? 'Tente ajustar os filtros de pesquisa para ver mais resultados.' 
+              : isCompletedTab
+                ? 'As conversas finalizadas aparecerão aqui automaticamente.'
+                : 'Novas conversas aparecerão aqui automaticamente.'}
           </p>
+          
+          {hasFilters && (
+            <button 
+              onClick={onClearFilters}
+              className="mt-4 px-4 py-1.5 border border-[#1f2937]/50 bg-[#0f1621] hover:bg-[#101820] text-slate-300 rounded-md"
+            >
+              Limpar filtros
+            </button>
+          )}
         </div>
       </div>
     );
   }
 
-  // Função para obter o nome do setor a partir do ID
-  const getSectorName = (sectorId) => {
-    if (!sectorId || !sectors || !sectors.length) return '';
-    const sector = sectors.find(s => s.id === sectorId || s._id === sectorId);
-    return sector ? sector.nome : 'Outro Setor';  // MODIFICAÇÃO: Retornar "Outro Setor" se não encontrado
-  };
-  
   return (
     <div className="space-y-2 pb-6">
       <AnimatePresence>
         {conversations.map((conversation) => {
-          // Tentar encontrar o nome do cliente de várias formas
-          let clienteName = "Cliente";
-          if (conversation.nomeCliente) {
-            clienteName = conversation.nomeCliente;
-          } else if (conversation.cliente && conversation.cliente.nome) {
-            clienteName = conversation.cliente.nome;
-          } else if (conversation.nome) {
-            clienteName = conversation.nome;
-          } else if (conversation.name) {
-            clienteName = conversation.name;
-          }
-          
-          // Tentar encontrar o número de telefone de várias formas
-          let telefone = null;
-          if (conversation.telefoneCliente) {
-            telefone = conversation.telefoneCliente;
-          } else if (conversation.cliente && conversation.cliente.telefone) {
-            telefone = conversation.cliente.telefone;
-          } else if (conversation.telefone) {
-            telefone = conversation.telefone;
-          } else if (conversation.phone) {
-            telefone = conversation.phone;
-          }
-          
-          // Tentar encontrar o setor de várias formas
-          let sectorLabel = "Setor";
-          if (conversation.setor && conversation.setor.nome) {
-            sectorLabel = conversation.setor.nome;
-          } else if (conversation.setorNome) {
-            sectorLabel = conversation.setorNome;
-          } else if (conversation.sectorName) {
-            sectorLabel = conversation.sectorName;
-          } else if (conversation.setorId) {
-            // Verifica se setorId é um objeto ou um ID simples
-            const setorIdValue = typeof conversation.setorId === 'object' && conversation.setorId !== null
-              ? conversation.setorId._id || conversation.setorId.id
-              : conversation.setorId;
-            sectorLabel = getSectorName(setorIdValue) || "Setor";
-          }
-          
           // Verificar se a conversa pertence ao setor do usuário
-          // Extrair os IDs com tratamento seguro para evitar erros
           const userSectorId = userSector?._id || userSector?.id || '';
           
           // Verificar se setorId é objeto ou string
@@ -442,84 +477,15 @@ const ListaConversas = ({
             
           const isUserSector = userSectorId && conversationSectorId && userSectorId === conversationSectorId;
           
-          // Determinar o status da conversa
-          let statusLabel = "Em Andamento";
-          let statusColor = "bg-green-600 hover:bg-green-700";
-          
-          const status = conversation.status || '';
-          const statusLower = String(status).toLowerCase();
-          
-          if (statusLower === 'aguardando' || status === 'AGUARDANDO') {
-            statusLabel = "Aguardando";
-            statusColor = "bg-yellow-600 hover:bg-yellow-700";
-          }
-          
           return (
-            <motion.div
+            <ConversationItem
               key={conversation._id || conversation.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.2 }}
-              className="cursor-pointer"
+              conversation={conversation}
               onClick={() => onSelectConversation(conversation._id || conversation.id)}
-            >
-              <div className={`p-4 rounded-xl backdrop-blur-sm border transition-all duration-200 shadow-sm hover:shadow-md
-                ${isUserSector 
-                  ? "bg-[#1e1d2b]/60 border-[#32304a]/40 hover:bg-[#2a2942]/60 hover:border-[#32304a]/70" 
-                  : "bg-[#2a1e2d]/60 border-[#4a324a]/40 hover:bg-[#3a2a3d]/60 hover:border-[#4a324a]/70"}`}>
-                <div className="flex items-center gap-3">
-                  <Avatar className={`h-10 w-10 ${isUserSector 
-                    ? "bg-green-600/20 border border-green-500/40" 
-                    : "bg-purple-600/20 border border-purple-500/40"}`}>
-                    <AvatarImage src={conversation.cliente?.avatar} />
-                    <AvatarFallback className={`${isUserSector 
-                      ? "bg-gradient-to-br from-green-600 to-green-500" 
-                      : "bg-gradient-to-br from-purple-600 to-purple-500"} text-white`}>
-                      {clienteName.charAt(0) || 'C'}
-                    </AvatarFallback>
-                  </Avatar>
-                  
-                  <div className="flex-1 overflow-hidden">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-medium text-white truncate flex items-center gap-2">
-                        {clienteName}
-                        {telefone && (
-                          <span className="text-xs text-gray-400 flex items-center">
-                            <Phone className="h-3 w-3 mr-1" />
-                            {telefone}
-                          </span>
-                        )}
-                      </h3>
-                      <span className="text-xs text-gray-400">
-                        {formatLastMessageTime(conversation.ultimaAtividade || conversation.timestamp)}
-                      </span>
-                    </div>
-                    
-                    <div className="flex flex-wrap items-center gap-2 mt-1">
-                      {/* Status da conversa */}
-                      <Badge 
-                        className={`px-2 py-1 text-xs text-white ${statusColor}`}
-                      >
-                        {statusLabel}
-                      </Badge>
-                      
-                      {/* Setor designado - Diferente cor para o setor do usuário */}
-                      <span className={`px-2 py-1 text-xs rounded-md ${isUserSector 
-                        ? "text-blue-300 bg-blue-900/30" 
-                        : "text-purple-300 bg-purple-900/30"}`}>
-                        {sectorLabel}
-                      </span>
-                    </div>
-                    
-                    {/* Mensagem em linha separada para melhor legibilidade */}
-                    <p className="text-sm text-gray-400 truncate mt-1">
-                      {conversation.ultimaMensagem || 'Sem mensagens'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
+              formatLastMessageTime={formatLastMessageTime}
+              isUserSector={isUserSector}
+              isCompleted={isCompletedTab}
+            />
           );
         })}
       </AnimatePresence>

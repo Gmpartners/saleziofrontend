@@ -20,6 +20,9 @@ import SectorManagement from '../pages/Admin/SectorManagement';
 import UserManagement from '../pages/Admin/UserManagement';
 import AdminAnalytics from '../pages/Admin/AdminAnalytics';
 
+// Nova página de diagnóstico
+import DiagnosticoSetor from '../pages/DiagnosticoSetor';
+
 const AppRoutes = () => {
   return (
     <Routes>
@@ -34,6 +37,9 @@ const AppRoutes = () => {
       <Route path="/conversations/:id" element={<RequireAuth><ConversationDetail /></RequireAuth>} />
       <Route path="/analytics" element={<RequireAuth><AnalyticsPage /></RequireAuth>} />
       <Route path="/profile" element={<RequireAuth><UserProfile /></RequireAuth>} />
+      
+      {/* Página de diagnóstico do setor Financeiro */}
+      <Route path="/diagnostico" element={<RequireAuth><DiagnosticoSetor /></RequireAuth>} />
       
       {/* Rotas de administração (requer papel de admin) */}
       <Route path="/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />

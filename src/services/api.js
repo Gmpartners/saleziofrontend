@@ -1,54 +1,76 @@
 // services/api.js
 import axios from 'axios';
+import { MultiFlowStatusMap } from '../models/multiflow';
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.devoltaaojogo.com/api';
-
-// Endpoints alternativos - tentar endpoints já existentes na API
-const DASHBOARD_ENDPOINT = '/dashboard';
+const API_URL = import.meta.env.VITE_API_URL || 'https://multi.compracomsegurancaeconfianca.com/api';
+const API_TOKEN = import.meta.env.VITE_API_TOKEN || 'netwydZWjrJpA';
 
 class ApiService {
   constructor() {
     this.api = axios.create({
       baseURL: API_URL,
       headers: {
-        'Content-Type': 'application/json'
-      }
+        'Content-Type': 'application/json',
+        'x-api-token': API_TOKEN
+      },
+      timeout: 10000 // Timeout de 10 segundos
     });
     
     // Cache para armazenar respostas
     this.cache = {};
     this.failedRequests = new Set();
-    
-    // Interceptor para adicionar token de autenticação
-    this.api.interceptors.request.use(
-      (config) => {
-        const token = localStorage.getItem('authToken');
-        if (token) {
-          config.headers['Authorization'] = `Bearer ${token}`;
-        }
-        return config;
-      },
-      (error) => {
-        return Promise.reject(error);
-      }
-    );
+    this.setoresCache = null;
     
     // Interceptor para tratar erros de resposta
     this.api.interceptors.response.use(
       (response) => response.data,
       (error) => {
-        // Tratamento de erros de autenticação (401)
-        if (error.response && error.response.status === 401) {
-          // Redirecionar para login ou atualizar token
-          localStorage.removeItem('authToken');
-          window.location.href = '/login';
+        // Verificar se o erro tem uma resposta
+        if (error.response) {
+          console.error('API Error:', {
+            status: error.response.status,
+            data: error.response.data,
+            url: error.config.url
+          });
+          
+          const status = error.response.status;
+          
+          // Redirecionar para login apenas em caso de erro de autenticação não relacionado a API_KEY
+          if ((status === 401 || status === 403) && 
+              !error.config.url.includes('/health') && 
+              error.response.data?.message?.toLowerCase().includes('token')) {
+            localStorage.removeItem('authToken');
+            // Manter o redirecionamento apenas para erros críticos de autenticação
+            // window.location.href = '/login';
+          }
+          
+          return Promise.reject(
+            error.response?.data?.message || error.message || 'Ocorreu um erro na requisição'
+          );
+        } 
+        // Erros de rede (sem resposta do servidor)
+        else if (error.request) {
+          console.error('API Network Error:', {
+            message: error.message,
+            url: error.config.url
+          });
+          
+          return Promise.reject(
+            'Erro de conexão com o servidor. Verifique sua internet ou tente novamente mais tarde.'
+          );
+        } 
+        // Outros erros
+        else {
+          console.error('API Error:', error.message);
+          return Promise.reject(error.message);
         }
-        
-        return Promise.reject(
-          error.response?.data?.message || error.message || 'Ocorreu um erro na requisição'
-        );
       }
     );
+  }
+
+  // Obter o userId do localStorage para usar nas requisições
+  getUserId() {
+    return localStorage.getItem('userId') || 'test-user';
   }
 
   // Verificar se um endpoint já falhou antes
@@ -59,112 +81,382 @@ class ApiService {
   // Marcar endpoint como falho
   _markRequestAsFailed(endpoint) {
     this.failedRequests.add(endpoint);
+    
+    // Remover do conjunto de falhas após 5 minutos para permitir novas tentativas
+    setTimeout(() => {
+      this.failedRequests.delete(endpoint);
+    }, 5 * 60 * 1000);
   }
 
   // Cache para evitar requisições repetidas
   async _cachedRequest(key, requestFn, fallbackData = null, ttl = 60000) {
-    // Se o endpoint já falhou antes, retornar imediatamente dados fictícios
-    if (this._hasRequestFailed(key)) {
-      return fallbackData;
+    // Se o endpoint já falhou antes e o fallback está disponível, retorna o fallback imediatamente
+    if (this._hasRequestFailed(key) && fallbackData !== null) {
+      console.log(`Usando fallback para ${key} devido a falha anterior`);
+      return {
+        success: true,
+        data: fallbackData,
+        source: 'fallback'
+      };
     }
 
     // Verificar se tem no cache e não expirou
     if (this.cache[key] && (Date.now() - this.cache[key].timestamp < ttl)) {
-      return this.cache[key].data;
+      console.log(`Usando cache para ${key}`);
+      return {
+        ...this.cache[key].data,
+        source: 'cache'
+      };
     }
     
     try {
+      // Adicionar timeout específico para este request
       const response = await requestFn();
+      
+      // Verificar se a resposta já tem a estrutura correta
+      const formattedResponse = response.success !== undefined 
+        ? response 
+        : { success: true, data: response };
       
       // Armazenar no cache
       this.cache[key] = {
-        data: response,
+        data: formattedResponse,
         timestamp: Date.now()
       };
       
-      return response;
+      return {
+        ...formattedResponse,
+        source: 'api'
+      };
     } catch (error) {
       console.warn(`Falha ao executar requisição ${key}:`, error);
       
       // Marcar esse endpoint como falho para evitar requisições repetidas
       this._markRequestAsFailed(key);
       
-      // Retornar o fallback
-      return fallbackData;
+      // Se temos fallback, retornar como resposta de sucesso mas indicando uso de fallback
+      if (fallbackData !== null) {
+        return {
+          success: true,
+          data: fallbackData,
+          source: 'fallback',
+          error: error.toString()
+        };
+      }
+      
+      // Sem fallback, retornar erro
+      return {
+        success: false,
+        error: error.toString(),
+        source: 'error'
+      };
     }
   }
 
-  // Métodos para autenticação
-  async syncUser(userData = {}) {
-    // Se a requisição já falhou antes, não tentar novamente
-    if (this._hasRequestFailed('sync-user')) {
-      return {
-        success: true,
-        usuario: {
-          id: localStorage.getItem('userId') || 'temp-user',
-          nome: localStorage.getItem('userName') || 'Usuário',
-          nomeExibicao: localStorage.getItem('userDisplayName') || 'Usuário',
-          email: localStorage.getItem('userEmail') || '',
-          role: localStorage.getItem('userRole') || 'representante',
-          setor: localStorage.getItem('userSector') || 'Suporte'
-        }
-      };
-    }
+  // Função helper para verificar se uma string é um ObjectId válido do MongoDB
+  isValidObjectId(id) {
+    return id && typeof id === 'string' && /^[0-9a-fA-F]{24}$/.test(id);
+  }
+
+  // Função para obter o ID real de um setor pelo nome
+  async getSetorIdByName(setorName) {
+    if (!setorName) return null;
     
     try {
-      // Garantir que o campo setor esteja presente
-      const userDataWithSector = {
-        ...userData,
-        setor: userData.setor || localStorage.getItem('userSector') || 'Suporte'
-      };
-      
-      return await this.api.post('/sync-user', userDataWithSector);
-    } catch (error) {
-      console.warn('Falha ao sincronizar usuário:', error);
-      
-      // Marcar como falho para não tentar novamente
-      this._markRequestAsFailed('sync-user');
-      
-      // Retornar dados fictícios
-      return {
-        success: true,
-        usuario: {
-          id: localStorage.getItem('userId') || 'temp-user',
-          nome: localStorage.getItem('userName') || 'Usuário',
-          nomeExibicao: localStorage.getItem('userDisplayName') || 'Usuário',
-          email: localStorage.getItem('userEmail') || '',
-          role: localStorage.getItem('userRole') || 'representante',
-          setor: localStorage.getItem('userSector') || 'Suporte'
+      // Usar cache local se disponível para evitar requisições repetidas
+      if (!this.setoresCache) {
+        const response = await this.getSetores();
+        if (response.success && Array.isArray(response.data)) {
+          this.setoresCache = response.data;
+        } else {
+          return null;
         }
-      };
+      }
+      
+      // Procurar pelo setor com o nome correspondente
+      const setor = this.setoresCache.find(
+        s => s.nome && s.nome.toLowerCase() === setorName.toLowerCase()
+      );
+      
+      return setor && setor._id ? setor._id : null;
+    } catch (error) {
+      console.error("Erro ao buscar ID do setor:", error);
+      return null;
     }
   }
 
-  async getProfile() {
+  // === MÉTODOS PARA SETORES === //
+
+  /**
+   * Lista todos os setores do usuário atual
+   * @returns {Promise<Object>} Lista de setores
+   */
+  async getSetores() {
+    const userId = this.getUserId();
+    const response = await this._cachedRequest(
+      'setores',
+      () => this.api.get(`/users/${userId}/setores`),
+      [{ 
+        _id: 'financeiro-id', 
+        userId, 
+        nome: 'Financeiro', 
+        descricao: 'Setor financeiro', 
+        responsavel: 'Admin', 
+        ativo: true 
+      }]
+    );
+    
+    // Atualizar o cache local dos setores
+    if (response.success && Array.isArray(response.data)) {
+      this.setoresCache = response.data;
+    }
+    
+    return response;
+  }
+
+  /**
+   * Obtém informações de um setor específico
+   * @param {string} setorId - ID do setor
+   * @returns {Promise<Object>} Dados do setor
+   */
+  async getSetorById(setorId) {
+    const userId = this.getUserId();
     return this._cachedRequest(
-      'profile',
-      () => this.api.get('/meu-perfil'),
-      {
-        id: localStorage.getItem('userId') || 'temp-user',
-        nome: localStorage.getItem('userName') || 'Usuário',
-        nomeExibicao: localStorage.getItem('userDisplayName') || 'Usuário',
-        email: localStorage.getItem('userEmail') || '',
-        role: localStorage.getItem('userRole') || 'representante',
-        setor: localStorage.getItem('userSector') || 'Suporte'
+      `setor-${setorId}`,
+      () => this.api.get(`/users/${userId}/setores/${setorId}`),
+      { 
+        _id: setorId, 
+        userId, 
+        nome: 'Financeiro', 
+        descricao: 'Setor financeiro', 
+        responsavel: 'Admin', 
+        ativo: true 
       }
     );
   }
 
-  async updateProfile(data) {
-    return this.api.put('/meu-perfil', data);
+  /**
+   * Cria um novo setor
+   * @param {Object} data - Dados do setor
+   * @returns {Promise<Object>} Resposta da API
+   */
+  async createSetor(data) {
+    const userId = this.getUserId();
+    const response = await this.api.post(`/users/${userId}/setores`, data);
+    
+    // Invalidar cache de setores
+    delete this.cache['setores'];
+    this.setoresCache = null;
+    
+    return response;
   }
 
-  // Métodos para dashboard
-  async getDashboard(params = {}) {
+  /**
+   * Atualiza um setor existente
+   * @param {string} setorId - ID do setor
+   * @param {Object} data - Dados a atualizar
+   * @returns {Promise<Object>} Resposta da API
+   */
+  async updateSetor(setorId, data) {
+    const userId = this.getUserId();
+    const response = await this.api.put(`/users/${userId}/setores/${setorId}`, data);
+    
+    // Invalidar cache de setores
+    delete this.cache['setores'];
+    delete this.cache[`setor-${setorId}`];
+    this.setoresCache = null;
+    
+    return response;
+  }
+
+  /**
+   * Exclui um setor
+   * @param {string} setorId - ID do setor
+   * @returns {Promise<Object>} Resposta da API
+   */
+  async deleteSetor(setorId) {
+    const userId = this.getUserId();
+    const response = await this.api.delete(`/users/${userId}/setores/${setorId}`);
+    
+    // Invalidar cache de setores
+    delete this.cache['setores'];
+    delete this.cache[`setor-${setorId}`];
+    this.setoresCache = null;
+    
+    return response;
+  }
+
+  // === MÉTODOS PARA CONVERSAS === //
+
+  /**
+   * Lista conversas com filtros opcionais
+   * @param {Object} params - Parâmetros de filtro
+   * @returns {Promise<Object>} Lista de conversas com paginação
+   */
+  async getConversas(params = {}) {
+    const userId = this.getUserId();
+    
+    // Clonar os parâmetros para não modificar o objeto original
+    let apiParams = { ...params };
+    
+    // Verificar se setorId é uma string que representa um nome de setor (não um ObjectId)
+    if (apiParams.setorId && !this.isValidObjectId(apiParams.setorId)) {
+      console.log(`Convertendo nome do setor '${apiParams.setorId}' para ObjectId`);
+      
+      // Buscar o ID real do setor pelo nome
+      const setorId = await this.getSetorIdByName(apiParams.setorId);
+      
+      if (setorId) {
+        apiParams.setorId = setorId;
+        console.log(`Setor '${params.setorId}' convertido para ID: ${setorId}`);
+      } else {
+        console.warn(`Setor '${params.setorId}' não encontrado, removendo filtro`);
+        delete apiParams.setorId;
+      }
+    }
+    
+    // Montar parâmetros finais
+    const queryParams = {
+      status: apiParams.status || undefined,
+      setorId: apiParams.setorId || undefined,
+      arquivada: apiParams.arquivada || undefined,
+      page: apiParams.page || 1,
+      limit: apiParams.limit || 20
+    };
+    
     return this._cachedRequest(
-      `dashboard-${JSON.stringify(params)}`,
-      () => this.api.get('/dashboard', { params }),
+      `conversas-${JSON.stringify(queryParams)}`,
+      () => this.api.get(`/users/${userId}/conversas`, { params: queryParams }),
+      [] // Dados vazios como fallback
+    );
+  }
+
+  /**
+   * Obtém uma conversa pelo ID
+   * @param {string} conversaId - ID da conversa
+   * @returns {Promise<Object>} Dados da conversa
+   */
+  async getConversaById(conversaId) {
+    const userId = this.getUserId();
+    return this._cachedRequest(
+      `conversa-${conversaId}`,
+      () => this.api.get(`/users/${userId}/conversas/${conversaId}`),
       {
+        _id: conversaId,
+        userId,
+        telefoneCliente: "+5521999887766",
+        nomeCliente: "Cliente",
+        setorId: {
+          _id: "financeiro-id",
+          nome: "Financeiro"
+        },
+        status: "aguardando",
+        mensagens: [],
+        arquivada: false,
+        metadados: {},
+        ultimaAtividade: new Date().toISOString(),
+        created: new Date().toISOString()
+      }
+    );
+  }
+
+  /**
+   * Obtém uma conversa pelo número de telefone
+   * @param {string} telefone - Número de telefone
+   * @returns {Promise<Object>} Dados da conversa
+   */
+  async getConversaByTelefone(telefone) {
+    const userId = this.getUserId();
+    return this._cachedRequest(
+      `conversa-telefone-${telefone}`,
+      () => this.api.get(`/users/${userId}/conversas/telefone/${telefone}`),
+      null
+    );
+  }
+
+  /**
+   * Envia uma mensagem em uma conversa
+   * @param {string} conversaId - ID da conversa
+   * @param {string} conteudo - Texto da mensagem
+   * @returns {Promise<Object>} Resposta da API
+   */
+  async enviarMensagem(conversaId, conteudo) {
+    const userId = this.getUserId();
+    return this.api.post(`/users/${userId}/conversas/${conversaId}/mensagens`, { conteudo });
+  }
+
+  /**
+   * Transfere uma conversa para outro setor
+   * @param {string} conversaId - ID da conversa
+   * @param {string} setorId - ID do setor de destino
+   * @returns {Promise<Object>} Resposta da API
+   */
+  async transferirConversa(conversaId, setorId) {
+    const userId = this.getUserId();
+    
+    // Verificar se o setorId é um nome de setor e não um ID
+    if (setorId && !this.isValidObjectId(setorId)) {
+      const realSetorId = await this.getSetorIdByName(setorId);
+      if (realSetorId) {
+        setorId = realSetorId;
+      } else {
+        throw new Error(`Setor '${setorId}' não encontrado`);
+      }
+    }
+    
+    return this.api.put(`/users/${userId}/conversas/${conversaId}/transferir`, { setorId });
+  }
+
+  /**
+   * Atualiza o status de uma conversa
+   * @param {string} conversaId - ID da conversa
+   * @param {string} status - Novo status
+   * @returns {Promise<Object>} Resposta da API
+   */
+  async atualizarStatusConversa(conversaId, status) {
+    const userId = this.getUserId();
+    return this.api.put(`/users/${userId}/conversas/${conversaId}/status`, { status });
+  }
+
+  /**
+   * Finaliza uma conversa
+   * @param {string} conversaId - ID da conversa
+   * @returns {Promise<Object>} Resposta da API
+   */
+  async finalizarConversa(conversaId) {
+    const userId = this.getUserId();
+    return this.api.put(`/users/${userId}/conversas/${conversaId}/finalizar`, {});
+  }
+
+  /**
+   * Arquiva uma conversa
+   * @param {string} conversaId - ID da conversa
+   * @returns {Promise<Object>} Resposta da API
+   */
+  async arquivarConversa(conversaId) {
+    const userId = this.getUserId();
+    return this.api.put(`/users/${userId}/conversas/${conversaId}/arquivo`, {});
+  }
+
+  /**
+   * Desarquiva uma conversa
+   * @param {string} conversaId - ID da conversa
+   * @returns {Promise<Object>} Resposta da API
+   */
+  async desarquivarConversa(conversaId) {
+    const userId = this.getUserId();
+    return this.api.put(`/users/${userId}/conversas/${conversaId}/desarquivar`, {});
+  }
+
+  // === MÉTODOS DE COMPATIBILIDADE === //
+  
+  /**
+   * Método para retrocompatibilidade - APIs de dashboard removidas temporariamente
+   */
+  async getDashboard() {
+    return {
+      success: true,
+      data: {
         totalConversas: 0,
         conversasResolvidas: 0,
         taxaResolucao: 0,
@@ -172,185 +464,47 @@ class ApiService {
         conversasPorStatus: {},
         volumeMensagensPorDia: []
       }
-    );
+    };
   }
 
-  // MÉTODOS ANALYTICS COM CACHE E EVITANDO REPETIR REQUISIÇÕES FALHAS
-  
-  // Método para obter o resumo do dashboard
-  async getDashboardSummary() {
-    return this._cachedRequest(
-      'dashboard-summary',
-      () => this.api.get(DASHBOARD_ENDPOINT),
-      {
-        atendimentosHoje: 0,
-        atendimentosSemana: 0,
-        atendimentosMes: 0,
-        tempoMedioHoje: {
-          tempoMedioMinutos: 0,
-          tempoMedioSegundos: 0
-        },
-        atendimentosPorStatus: [],
-        atendentesStatus: []
-      }
-    );
-  }
-
-  // Método para obter tempo médio
-  async getTempoMedio(setor = 'todos', periodo = 'dia') {
-    // Usar uma versão simulada em vez de tentar acessar um endpoint que não existe
-    return this._cachedRequest(
-      `tempo-medio-${setor}-${periodo}`,
-      // Tentar uma alternativa usando o endpoint dashboard que sabemos que existe
-      () => this.api.get(DASHBOARD_ENDPOINT, { params: { setor, periodo, tipo: 'tempo' } }),
-      // Dados simulados como fallback
-      [
-        { setor: 'Suporte', tempoMedioMinutos: 8.5 },
-        { setor: 'Vendas', tempoMedioMinutos: 5.2 },
-        { setor: 'Financeiro', tempoMedioMinutos: 7.8 }
-      ]
-    );
-  }
-
-  // Método para obter volume de atendimentos
-  async getVolumeAtendimentos(setor = 'todos', periodo = 'dia') {
-    // Usar uma versão simulada em vez de tentar acessar um endpoint que não existe
-    return this._cachedRequest(
-      `volume-atendimentos-${setor}-${periodo}`,
-      // Tentar uma alternativa usando o endpoint dashboard que sabemos que existe
-      () => this.api.get(DASHBOARD_ENDPOINT, { params: { setor, periodo, tipo: 'volume' } }),
-      // Dados simulados como fallback
-      (() => {
-        const hoje = new Date();
-        const dados = [];
-        
-        // Criar dados simulados para o período selecionado (dia/semana/mês)
-        const dias = periodo === 'dia' ? 1 : periodo === 'semana' ? 7 : 30;
-        
-        for (let i = 0; i < dias; i++) {
-          const data = new Date();
-          data.setDate(hoje.getDate() - i);
-          dados.unshift({
-            periodo: data.toISOString().split('T')[0],
-            contagem: Math.floor(Math.random() * 30) + 10
-          });
-        }
-        
-        return dados;
-      })()
-    );
-  }
-
-  // Método para obter atendimentos aguardando
-  async getAtendimentosAguardando() {
-    // Usar uma versão simulada em vez de tentar acessar um endpoint que não existe
-    return this._cachedRequest(
-      'atendimentos-aguardando',
-      // Tentar uma alternativa usando o endpoint dashboard que sabemos que existe
-      () => this.api.get(DASHBOARD_ENDPOINT, { params: { status: 'aguardando' } }),
-      // Array vazio como fallback para evitar erro no .map()
-      [
-        { setor: 'suporte', aguardando: 5, emAtendimento: 12, reaberto: 2, total: 19 },
-        { setor: 'vendas', aguardando: 3, emAtendimento: 8, reaberto: 1, total: 12 },
-        { setor: 'financeiro', aguardando: 2, emAtendimento: 4, reaberto: 0, total: 6 }
-      ]
-    );
-  }
-
-  // Método para setores
-  async getSectors() {
-    return this._cachedRequest(
-      'sectors',
-      () => this.api.get('/setores'),
-      [
-        { _id: 'suporte', nome: 'Suporte' },
-        { _id: 'vendas', nome: 'Vendas' },
-        { _id: 'financeiro', nome: 'Financeiro' }
-      ]
-    );
-  }
-
-  async createSector(data) {
-    return this.api.post('/setores', data);
-  }
-
-  async getSectorById(id) {
-    return this.api.get(`/setores/${id}`);
-  }
-
-  async updateSector(id, data) {
-    return this.api.put(`/setores/${id}`, data);
-  }
-
-  async deactivateSector(id) {
-    return this.api.delete(`/setores/${id}`);
-  }
-
-  // Métodos para conversas
+  /**
+   * Método para retrocompatibilidade - mapeamento para getConversas
+   */
   async getConversations(params = {}) {
-    return this._cachedRequest(
-      `conversations-${JSON.stringify(params)}`,
-      () => this.api.get('/conversas', { params }),
-      []
-    );
+    const result = await this.getConversas({
+      status: params.status,
+      setorId: params.setorId,
+      arquivada: params.arquivada === true ? true : undefined,
+      page: params.page,
+      limit: params.limit
+    });
+    
+    // Retornar apenas os dados (manter compatibilidade)
+    return result.data;
   }
 
+  /**
+   * Método para retrocompatibilidade - mapeamento para getConversaById
+   */
   async getConversationById(id) {
-    return this.api.get(`/conversas/${id}`);
+    const result = await this.getConversaById(id);
+    return result.data;
   }
 
-  async updateConversation(id, data) {
-    return this.api.put(`/conversas/${id}`, data);
-  }
-
+  /**
+   * Método para retrocompatibilidade - mapeamento para enviarMensagem
+   */
   async addMessage(conversationId, text) {
-    return this.api.post(`/conversas/${conversationId}/mensagens`, { texto: text });
+    const result = await this.enviarMensagem(conversationId, text);
+    return result;
   }
 
-  // Métodos para templates
-  async getTemplates() {
-    return this._cachedRequest(
-      'templates',
-      () => this.api.get('/templates'),
-      []
-    );
-  }
-
-  async getPersonalTemplates() {
-    return this.api.get('/templates/meus');
-  }
-
-  async createTemplate(data) {
-    return this.api.post('/templates', data);
-  }
-
-  async getTemplateById(id) {
-    return this.api.get(`/templates/${id}`);
-  }
-
-  async updateTemplate(id, data) {
-    return this.api.put(`/templates/${id}`, data);
-  }
-
-  async deactivateTemplate(id) {
-    return this.api.delete(`/templates/${id}`);
-  }
-
-  // Métodos para usuários (apenas admin)
-  async getUsers() {
-    return this._cachedRequest(
-      'users',
-      () => this.api.get('/usuarios'),
-      []
-    );
-  }
-
-  async getUserById(id) {
-    return this.api.get(`/usuarios/${id}`);
-  }
-
-  async updateUser(id, data) {
-    return this.api.put(`/usuarios/${id}`, data);
+  /**
+   * Método para retrocompatibilidade - mapeamento para getSetores
+   */
+  async getSectors() {
+    const result = await this.getSetores();
+    return result.data;
   }
 }
 

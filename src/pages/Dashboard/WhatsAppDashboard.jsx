@@ -1,24 +1,18 @@
 // src/pages/Dashboard/WhatsAppDashboard.jsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
-  MessageSquare, Clock, Star, CheckCircle, BarChart2, Users, 
-  TrendingUp, ChevronDown, Phone, FileText, Zap, User, Award, 
-  Calendar, Filter, Search, Bell, ChevronLeft, ChevronRight, 
-  Plus, ArrowRight, ArrowUp, ArrowDown, HelpCircle, AlertCircle, 
-  Activity, MessageCircle, RefreshCw, BrainCircuit
+  MessageSquare, Clock, CheckCircle, BarChart2, Users, 
+  TrendingUp, Filter, Search, Bell, ArrowRight, 
+  Activity, MessageCircle, RefreshCw
 } from 'lucide-react';
 import { 
-  LineChart, BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, 
-  Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, 
-  Area, AreaChart 
+  AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid, 
+  Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
-import { 
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
-} from '@/components/ui/select';
 
 // Importar hooks e serviços
-import { useAuthContext } from '../../hooks/useAuthContext'; // Usando o hook original
+import { useAuthContext } from '../../hooks/useAuthContext';
 import { useSocket } from '../../contexts/SocketContext';
 import apiService from '../../services/api';
 
@@ -38,8 +32,10 @@ const WhatsAppDashboard = () => {
   const [isMobile, setIsMobile] = useState(false);
   const [openDropdown, setOpenDropdown] = useState(null);
   const navigate = useNavigate();
-  const { userProfile, isAdmin } = useAuthContext(); // Usando o hook original
+  const { userProfile, isAdmin } = useAuthContext();
   const { isConnected } = useSocket();
+  const previousTimeRangeRef = useRef(timeRange);
+  const isInitialLoadRef = useRef(true);
 
   // Refs para animações
   const headerRef = useRef(null);
@@ -59,7 +55,7 @@ const WhatsAppDashboard = () => {
       window.removeEventListener('resize', checkMobile);
     };
   }, []);
-
+  
   // Fechar dropdowns ao clicar fora
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -85,8 +81,8 @@ const WhatsAppDashboard = () => {
     }
   };
 
-  // Carregar dados da API
-  const carregarDados = async () => {
+  // Carregar dados da API - memoized com useCallback para prevenir recriação
+  const carregarDados = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     
@@ -291,40 +287,10 @@ const WhatsAppDashboard = () => {
       setError('Falha ao carregar dados do dashboard. Por favor tente novamente.');
       setIsLoading(false);
     }
-  };
+  }, [timeRange, selectedSector]);
 
-  // Carregar dados quando o componente montar
-  useEffect(() => {
-    carregarDados();
-    
-    // Adicionar animação de carregamento com pequeno atraso para efeito visual
-    setTimeout(() => {
-      setIsLoaded(true);
-    }, 300);
-    
-    // Configurar atualização periódica
-    const interval = setInterval(() => {
-      carregarDados();
-    }, 60000); // Atualizar a cada minuto
-    
-    return () => clearInterval(interval);
-  }, []);
-  
-  // Atualizar dados filtrados quando o período de tempo mudar
-  useEffect(() => {
-    if (!data) return;
-    filterDataByTimeRange(data, timeRange);
-  }, [timeRange, data]);
-  
-  // Recarregar dados quando o período mudar
-  useEffect(() => {
-    if (isLoaded) {
-      carregarDados();
-    }
-  }, [timeRange]);
-  
   // Filtrar dados baseado no período de tempo
-  const filterDataByTimeRange = (data, range) => {
+  const filterDataByTimeRange = useCallback((data, range) => {
     if (!data) return;
     
     const today = new Date();
@@ -363,7 +329,45 @@ const WhatsAppDashboard = () => {
     };
     
     setFilteredData(filtered);
-  };
+  }, []);
+
+  // Carregar dados quando o componente montar
+  useEffect(() => {
+    // Carregar dados apenas uma vez na montagem e não na atualização
+    if (isInitialLoadRef.current) {
+      carregarDados();
+      
+      // Adicionar animação de carregamento com pequeno atraso para efeito visual
+      setTimeout(() => {
+        setIsLoaded(true);
+      }, 300);
+      
+      isInitialLoadRef.current = false;
+    }
+    
+    // Configurar atualização periódica
+    const interval = setInterval(() => {
+      carregarDados();
+    }, 60000); // Atualizar a cada minuto
+    
+    return () => clearInterval(interval);
+  }, [carregarDados]);
+  
+  // Atualizar dados filtrados quando o período de tempo mudar
+  useEffect(() => {
+    if (!data) return;
+    filterDataByTimeRange(data, timeRange);
+  }, [timeRange, data, filterDataByTimeRange]);
+  
+  // Recarregar dados quando o período mudar, mas evitar loop
+  useEffect(() => {
+    // Verificar se não é o carregamento inicial e se o timeRange realmente mudou
+    if (isLoaded && !isInitialLoadRef.current && previousTimeRangeRef.current !== timeRange) {
+      carregarDados();
+      // Atualizar a referência para o valor atual
+      previousTimeRangeRef.current = timeRange;
+    }
+  }, [timeRange, isLoaded, carregarDados]);
   
   // Calcular métricas a partir dos dados filtrados
   const calculateMetrics = () => {
@@ -441,40 +445,32 @@ const WhatsAppDashboard = () => {
   // Dados de notificações recentes
   const defaultNotifications = [
     { id: 1, title: "Nova mensagem urgente", description: "Cliente Premium solicitando atendimento imediato", time: "2 minutos atrás", isNew: true },
-   
     { id: 3, title: "Reunião agendada", description: "Reunião de equipe às 15:00 para revisar métricas", time: "3 horas atrás", isNew: false }
   ];
 
   // Usar notificações
   const displayedNotifications = notifications.length > 0 ? notifications : defaultNotifications;
 
-  // Componente Select personalizado para nosso design
-  const CustomShadcnSelect = ({ value, onChange, options, placeholder }) => {
-    return (
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger 
-          className="w-full h-10 bg-[#1e1d2b] border border-green-600 rounded-lg text-white focus:outline-none focus:ring-1 focus:ring-green-500 focus:ring-offset-0 focus:border-green-600"
-        >
-          <SelectValue placeholder={placeholder} />
-        </SelectTrigger>
-        <SelectContent 
-          className="bg-[#1e1d2b] border border-green-600 text-white rounded-lg z-[9999] shadow-lg"
-          position="popper"
-          sideOffset={4}
-        >
-          {options.map((option) => (
-            <SelectItem 
-              key={option.value} 
-              value={option.value}
-              className="hover:bg-[#25243a] focus:bg-[#25243a] cursor-pointer text-white data-[highlighted]:bg-blue-600"
-            >
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    );
-  };
+  // Componente Select personalizado para filtros
+  const CustomSelect = ({ value, onChange, options, placeholder }) => (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-[#1e1d2b] border border-green-600 text-white rounded-lg py-2 px-3 pr-8 focus:outline-none focus:ring-2 focus:ring-green-500"
+        aria-label={placeholder}
+      >
+        {options.map(option => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+        <Filter className="h-4 w-4 text-gray-400" />
+      </div>
+    </div>
+  );
 
   // Tela de carregamento enquanto os dados estão sendo preparados
   if (isLoading && !data) {
@@ -494,85 +490,38 @@ const WhatsAppDashboard = () => {
     );
   }
 
-  // Tela de erro
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-[#0c0b14]">
-        <div className="flex flex-col items-center gap-4 max-w-md p-6 bg-[#1e1d2b] rounded-xl shadow-lg">
-          <div className="relative">
-            <div className="absolute inset-0 bg-red-500/20 blur-xl"></div>
-            <AlertCircle className="h-16 w-16 text-red-500 relative z-10" />
-          </div>
-          <div className="text-center">
-            <h2 className="text-2xl font-bold text-white mb-2">Erro ao Carregar Dados</h2>
-            <p className="text-slate-400 mb-4">{error}</p>
-            <button 
-              onClick={carregarDados}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-            >
-              Tentar Novamente
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Efeito de partículas de fundo
-  const ParticleBackground = () => {
-    return (
-      <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
-        {Array.from({ length: 30 }).map((_, index) => (
-          <div 
-            key={index} 
-            className="absolute rounded-full bg-green-500/10"
-            style={{
-              width: `${Math.random() * 6 + 1}px`,
-              height: `${Math.random() * 6 + 1}px`,
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              opacity: Math.random() * 0.5 + 0.1,
-              animation: `float ${Math.random() * 50 + 20}s infinite alternate ease-in-out`,
-              animationDelay: `${Math.random() * 5}s`
-            }}
-          />
-        ))}
-      </div>
-    );
-  };
-  
   // Renderizar conteúdo do dashboard com base na aba ativa
   const renderContent = () => {
     switch(activeTab) {
       case 'overview':
         return (
-          <div className="space-y-6 relative">
+          <div className="space-y-4 md:space-y-6 relative">
             {/* Stats Cards Row with cascade animation */}
-            <div ref={statsRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div ref={statsRef} className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
               {/* Total Messages Card */}
-              <div className="bg-[#1e1d2b] rounded-xl p-5 shadow-lg transition-all duration-300 group hover:-translate-y-1 animate-fadeInUp">
-                <div className="flex justify-between items-center mb-4">
-                  <div className="text-sm text-gray-400 font-medium">Total Mensagens</div>
-                  <div className="h-8 w-8 rounded-lg bg-green-500/10 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
-                    <MessageSquare className="h-4 w-4 text-green-500" />
+              <div className="bg-[#1e1d2b] rounded-xl p-3 md:p-5 shadow-lg transition-all duration-300 group hover:-translate-y-1 animate-fadeInUp">
+                <div className="flex justify-between items-center mb-3 md:mb-4">
+                  <div className="text-xs md:text-sm text-gray-400 font-medium">Total Mensagens</div>
+                  <div className="h-7 w-7 md:h-8 md:w-8 rounded-lg bg-green-500/10 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                    <MessageSquare className="h-3.5 w-3.5 md:h-4 md:w-4 text-green-500" />
                   </div>
                 </div>
                 <div className="flex flex-col gap-1">
-                  <div className="text-2xl font-bold text-white">{formatNumber(metrics.totalMessages)}</div>
+                  <div className="text-xl md:text-2xl font-bold text-white">{formatNumber(metrics.totalMessages)}</div>
                   <div className="text-xs text-gray-400">mensagens no período</div>
                 </div>
               </div>
               
               {/* Avg Response Time Card */}
-              <div className="bg-[#1e1d2b] rounded-xl p-5 shadow-lg transition-all duration-300 group hover:-translate-y-1 animate-fadeInUp delay-100">
-                <div className="flex justify-between items-center mb-4">
-                  <div className="text-sm text-gray-400 font-medium">Tempo de Resposta</div>
-                  <div className="h-8 w-8 rounded-lg bg-blue-500/10 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
-                    <Clock className="h-4 w-4 text-blue-500" />
+              <div className="bg-[#1e1d2b] rounded-xl p-3 md:p-5 shadow-lg transition-all duration-300 group hover:-translate-y-1 animate-fadeInUp delay-100">
+                <div className="flex justify-between items-center mb-3 md:mb-4">
+                  <div className="text-xs md:text-sm text-gray-400 font-medium">Tempo de Resposta</div>
+                  <div className="h-7 w-7 md:h-8 md:w-8 rounded-lg bg-blue-500/10 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                    <Clock className="h-3.5 w-3.5 md:h-4 md:w-4 text-blue-500" />
                   </div>
                 </div>
                 <div className="flex flex-col gap-1">
-                  <div className="text-2xl font-bold text-white">{metrics.avgResponseTime} min</div>
+                  <div className="text-xl md:text-2xl font-bold text-white">{metrics.avgResponseTime} min</div>
                   <div className="text-xs flex items-center gap-1">
                     <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-green-500/20 text-green-400">
                       +8%
@@ -582,17 +531,16 @@ const WhatsAppDashboard = () => {
                 </div>
               </div>
               
-
               {/* Resolution Rate Card */}
-              <div className="bg-[#1e1d2b] rounded-xl p-5 shadow-lg transition-all duration-300 group hover:-translate-y-1 animate-fadeInUp delay-300">
-                <div className="flex justify-between items-center mb-4">
-                  <div className="text-sm text-gray-400 font-medium">Taxa de Resolução</div>
-                  <div className="h-8 w-8 rounded-lg bg-purple-500/10 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
-                    <CheckCircle className="h-4 w-4 text-purple-500" />
+              <div className="bg-[#1e1d2b] rounded-xl p-3 md:p-5 shadow-lg transition-all duration-300 group hover:-translate-y-1 animate-fadeInUp delay-300">
+                <div className="flex justify-between items-center mb-3 md:mb-4">
+                  <div className="text-xs md:text-sm text-gray-400 font-medium">Taxa de Resolução</div>
+                  <div className="h-7 w-7 md:h-8 md:w-8 rounded-lg bg-purple-500/10 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                    <CheckCircle className="h-3.5 w-3.5 md:h-4 md:w-4 text-purple-500" />
                   </div>
                 </div>
                 <div className="flex flex-col gap-1">
-                  <div className="text-2xl font-bold text-white">{metrics.resolution}%</div>
+                  <div className="text-xl md:text-2xl font-bold text-white">{metrics.resolution}%</div>
                   <div className="text-xs flex items-center gap-1">
                     <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-green-500/20 text-green-400">
                       +5.2%
@@ -601,17 +549,36 @@ const WhatsAppDashboard = () => {
                   </div>
                 </div>
               </div>
+              
+              {/* Engagement Card - visible on larger screens */}
+              <div className="bg-[#1e1d2b] rounded-xl p-3 md:p-5 shadow-lg transition-all duration-300 group hover:-translate-y-1 animate-fadeInUp delay-300">
+                <div className="flex justify-between items-center mb-3 md:mb-4">
+                  <div className="text-xs md:text-sm text-gray-400 font-medium">Engajamento</div>
+                  <div className="h-7 w-7 md:h-8 md:w-8 rounded-lg bg-amber-500/10 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                    <Users className="h-3.5 w-3.5 md:h-4 md:w-4 text-amber-500" />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <div className="text-xl md:text-2xl font-bold text-white">{filteredData?.overallStats?.taxaEngajamento || 78.4}%</div>
+                  <div className="text-xs flex items-center gap-1">
+                    <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-green-500/20 text-green-400">
+                      +3.1%
+                    </span>
+                    <span className="text-gray-400">vs período anterior</span>
+                  </div>
+                </div>
+              </div>
             </div>
             
             {/* Charts Section */}
-            <div ref={chartsRef} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div ref={chartsRef} className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
               {/* Message Volume Chart */}
-              <div className="bg-[#1e1d2b] rounded-xl p-5 shadow-lg transition-all duration-300 animate-fadeInUp delay-400">
-                <div className="flex items-center gap-2 mb-4">
-                  <Activity className="h-5 w-5 text-green-500" />
-                  <h3 className="text-lg font-semibold text-white">Volume de Mensagens</h3>
+              <div className="bg-[#1e1d2b] rounded-xl p-3 md:p-5 shadow-lg transition-all duration-300 animate-fadeInUp delay-400">
+                <div className="flex items-center gap-2 mb-3 md:mb-4">
+                  <Activity className="h-4 w-4 md:h-5 md:w-5 text-green-500" />
+                  <h3 className="text-base md:text-lg font-semibold text-white">Volume de Mensagens</h3>
                 </div>
-                <div className="h-[300px]">
+                <div className="h-[225px] md:h-[300px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={filteredData?.dailyData?.slice(-14) || []}>
                       <defs>
@@ -686,25 +653,28 @@ const WhatsAppDashboard = () => {
               </div>
               
               {/* Sector Distribution Chart */}
-              <div className="bg-[#1e1d2b] rounded-xl p-5 shadow-lg transition-all duration-300 animate-fadeInUp delay-500">
-                <div className="flex items-center gap-2 mb-4">
-                  <Activity className="h-5 w-5 text-green-500" />
-                  <h3 className="text-lg font-semibold text-white">Distribuição por Setor</h3>
+              <div className="bg-[#1e1d2b] rounded-xl p-3 md:p-5 shadow-lg transition-all duration-300 animate-fadeInUp delay-500">
+                <div className="flex items-center gap-2 mb-3 md:mb-4">
+                  <Activity className="h-4 w-4 md:h-5 md:w-5 text-green-500" />
+                  <h3 className="text-base md:text-lg font-semibold text-white">Distribuição por Setor</h3>
                 </div>
-                <div className="h-[300px] flex items-center justify-center">
+                <div className="h-[225px] md:h-[300px] flex items-center justify-center">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
                         data={filteredData?.sectorData || []}
                         cx="50%"
                         cy="50%"
-                        labelLine={false}
-                        outerRadius="70%"
-                        innerRadius="55%"
+                        labelLine={isMobile ? false : true}
+                        outerRadius={isMobile ? "60%" : "70%"}
+                        innerRadius={isMobile ? "40%" : "55%"}
                         fill="#8884d8"
                         dataKey="totalMessages"
                         nameKey="name"
-                        label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                        label={isMobile ? 
+                          false : 
+                          ({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`
+                        }
                         paddingAngle={2}
                         animationBegin={0}
                         animationDuration={1500}
@@ -736,11 +706,11 @@ const WhatsAppDashboard = () => {
             </div>
             
             {/* Recent Conversations Section */}
-            <div className="bg-[#1e1d2b] rounded-xl p-5 shadow-lg animate-fadeInUp delay-600">
-              <div className="flex items-center justify-between mb-6">
+            <div className="bg-[#1e1d2b] rounded-xl p-3 md:p-5 shadow-lg animate-fadeInUp delay-600">
+              <div className="flex items-center justify-between mb-3 md:mb-6">
                 <div className="flex items-center gap-2">
-                  <MessageCircle className="h-5 w-5 text-green-500" />
-                  <h3 className="text-lg font-semibold text-white">Conversas Recentes</h3>
+                  <MessageCircle className="h-4 w-4 md:h-5 md:w-5 text-green-500" />
+                  <h3 className="text-base md:text-lg font-semibold text-white">Conversas Recentes</h3>
                 </div>
                 <button 
                   onClick={() => navigate('/conversations')}
@@ -750,75 +720,70 @@ const WhatsAppDashboard = () => {
                 </button>
               </div>
               
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[600px] text-sm">
-                  <thead>
-                    <tr className="border-b border-[#32304a] text-gray-400">
-                      <th className="text-left pb-3 font-medium">ID</th>
-                      <th className="text-left pb-3 font-medium">Cliente</th>
-                      <th className="text-left pb-3 font-medium">Assunto</th>
-                      <th className="text-left pb-3 font-medium">Status</th>
-                      <th className="text-left pb-3 font-medium">Atendente</th>
-                      <th className="text-left pb-3 font-medium">Atualizado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(filteredData?.conversations || []).slice(0, 5).map((conversation, index) => (
-                      <tr 
-                        key={conversation.id} 
-                        className="border-b border-[#32304a]/50 hover:bg-[#25243a]/50 transition-colors cursor-pointer"
-                        onClick={() => navigate(`/conversations/${conversation.id}`)}
-                      >
-                        <td className="py-3 font-medium text-green-400">{conversation.id}</td>
-                        <td className="py-3 text-white">{conversation.customer}</td>
-                        <td className="py-3 text-gray-300">{conversation.subject}</td>
-                        <td className="py-3">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
-                            ${conversation.status === 'Resolvido' 
-                              ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
-                              : conversation.status === 'Em andamento'
-                                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                                : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                            }`}>
-                            {conversation.status}
-                          </span>
-                        </td>
-                        <td className="py-3">
-                          {conversation.agent ? (
-                            <div className="flex items-center gap-2">
-                              <div className="w-7 h-7 rounded-full bg-green-600 flex items-center justify-center text-white text-xs font-medium">
-                                {conversation.agent.avatar}
-                              </div>
-                              <span className="text-gray-300">{conversation.agent.name.split(' ')[0]}</span>
-                            </div>
-                          ) : (
-                            <span className="text-gray-400">Não atribuído</span>
-                          )}
-                        </td>
-                        <td className="py-3 text-gray-400">{timeAgo(conversation.updatedAt)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              {/* Lista de conversas (versão mobile-friendly) */}
+              <div className="space-y-3">
+                {(filteredData?.conversations || []).slice(0, 3).map((conversation) => (
+                  <div 
+                    key={conversation.id}
+                    onClick={() => navigate(`/conversations/${conversation.id}`)}
+                    className="bg-[#25243a] rounded-lg p-3 cursor-pointer hover:bg-[#32304a] transition-colors"
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex-1">
+                        <h4 className="text-white font-medium">{conversation.customer}</h4>
+                        <p className="text-xs text-gray-400">{conversation.subject}</p>
+                      </div>
+                      <div className="flex flex-col items-end">
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          conversation.status === 'Resolvido' 
+                            ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                            : conversation.status === 'Em andamento'
+                              ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                              : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                          }`}>
+                          {conversation.status}
+                        </span>
+                        <span className="text-xs text-gray-500 mt-1">
+                          {timeAgo(conversation.updatedAt)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="bg-blue-600/20 text-blue-400 px-1.5 py-0.5 rounded text-xs">
+                        {conversation.tags[0]}
+                      </span>
+                      {conversation.agent ? (
+                        <div className="flex items-center gap-1.5">
+                          <div className="h-5 w-5 rounded-full bg-green-600 flex items-center justify-center text-white text-xs">
+                            {conversation.agent.avatar}
+                          </div>
+                          <span className="text-gray-400">{conversation.agent.name.split(' ')[0]}</span>
+                        </div>
+                      ) : (
+                        <span className="text-gray-500">Não atribuído</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
         );
         
       case 'analytics':
-        // Conteúdo da aba de Análise
+        // Simplificado para móvel
         return (
-          <div className="space-y-6">
+          <div className="space-y-4 md:space-y-6">
             {/* Analytics KPIs */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fadeIn">
-              <div className="bg-[#1e1d2b] rounded-xl p-5 shadow-lg hover:shadow-xl transition-all duration-300">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-6 animate-fadeIn">
+              <div className="bg-[#1e1d2b] rounded-xl p-3 md:p-5 shadow-lg hover:shadow-xl transition-all duration-300">
                 <div className="flex flex-col items-start">
-                  <div className="h-12 w-12 rounded-lg bg-green-500/10 flex items-center justify-center mb-4">
-                    <Users className="h-6 w-6 text-green-500" />
+                  <div className="h-10 w-10 md:h-12 md:w-12 rounded-lg bg-green-500/10 flex items-center justify-center mb-3 md:mb-4">
+                    <Users className="h-5 w-5 md:h-6 md:w-6 text-green-500" />
                   </div>
                   <div className="space-y-1">
                     <div className="text-sm text-gray-400 font-medium">Taxa de Engajamento</div>
-                    <div className="text-3xl font-bold bg-gradient-to-r from-green-500 to-emerald-500 text-transparent bg-clip-text">
+                    <div className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-green-500 to-emerald-500 text-transparent bg-clip-text">
                       {filteredData?.overallStats?.taxaEngajamento || 78.4}%
                     </div>
                     <div className="text-xs text-gray-500">
@@ -828,14 +793,14 @@ const WhatsAppDashboard = () => {
                 </div>
               </div>
               
-              <div className="bg-[#1e1d2b] rounded-xl p-5 shadow-lg hover:shadow-xl transition-all duration-300">
+              <div className="bg-[#1e1d2b] rounded-xl p-3 md:p-5 shadow-lg hover:shadow-xl transition-all duration-300">
                 <div className="flex flex-col items-start">
-                  <div className="h-12 w-12 rounded-lg bg-amber-500/10 flex items-center justify-center mb-4">
-                    <TrendingUp className="h-6 w-6 text-amber-500" />
+                  <div className="h-10 w-10 md:h-12 md:w-12 rounded-lg bg-amber-500/10 flex items-center justify-center mb-3 md:mb-4">
+                    <TrendingUp className="h-5 w-5 md:h-6 md:w-6 text-amber-500" />
                   </div>
                   <div className="space-y-1">
                     <div className="text-sm text-gray-400 font-medium">Crescimento Mensal</div>
-                    <div className="text-3xl font-bold bg-gradient-to-r from-amber-500 to-yellow-500 text-transparent bg-clip-text">
+                    <div className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-amber-500 to-yellow-500 text-transparent bg-clip-text">
                       {filteredData?.overallStats?.crescimentoMensal > 0 ? '+' : ''}{filteredData?.overallStats?.crescimentoMensal || 24.6}%
                     </div>
                     <div className="text-xs text-gray-500">
@@ -845,14 +810,14 @@ const WhatsAppDashboard = () => {
                 </div>
               </div>
               
-              <div className="bg-[#1e1d2b] rounded-xl p-5 shadow-lg hover:shadow-xl transition-all duration-300">
+              <div className="bg-[#1e1d2b] rounded-xl p-3 md:p-5 shadow-lg hover:shadow-xl transition-all duration-300">
                 <div className="flex flex-col items-start">
-                  <div className="h-12 w-12 rounded-lg bg-blue-500/10 flex items-center justify-center mb-4">
-                    <MessageCircle className="h-6 w-6 text-blue-500" />
+                  <div className="h-10 w-10 md:h-12 md:w-12 rounded-lg bg-blue-500/10 flex items-center justify-center mb-3 md:mb-4">
+                    <MessageCircle className="h-5 w-5 md:h-6 md:w-6 text-blue-500" />
                   </div>
                   <div className="space-y-1">
                     <div className="text-sm text-gray-400 font-medium">Mensagens por Cliente</div>
-                    <div className="text-3xl font-bold bg-gradient-to-r from-blue-500 to-cyan-500 text-transparent bg-clip-text">
+                    <div className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-blue-500 to-cyan-500 text-transparent bg-clip-text">
                       {filteredData?.overallStats?.mensagensPorCliente?.toFixed(1) || 8.2}
                     </div>
                     <div className="text-xs text-gray-500">
@@ -862,19 +827,17 @@ const WhatsAppDashboard = () => {
                 </div>
               </div>
             </div>
-            
-            {/* Performance Charts - ver código original para completar */}
           </div>
         );
         
       case 'conversations':
-        // Conteúdo da aba de Conversas
+        // Conteúdo simplificado para mobile
         return (
-          <div className="space-y-6">
+          <div className="space-y-4 md:space-y-6">
             {/* Search and Filters */}
-            <div className="bg-[#1e1d2b] rounded-xl p-5 shadow-lg">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="col-span-1 md:col-span-2 relative">
+            <div className="bg-[#1e1d2b] rounded-xl p-3 md:p-5 shadow-lg">
+              <div className="space-y-3">
+                <div className="relative">
                   <input 
                     type="text" 
                     placeholder="Pesquisar conversas..." 
@@ -882,33 +845,16 @@ const WhatsAppDashboard = () => {
                   />
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                 </div>
-                <div className="flex gap-3">
-                  <div className="flex-1">
-                    <CustomShadcnSelect
-                      value={selectedSector}
-                      onChange={setSelectedSector}
-                      options={[
-                        { value: 'all', label: 'Todos os Setores' },
-                        ...(filteredData?.sectors || []).map(sector => ({ value: sector, label: sector }))
-                      ]}
-                      placeholder="Selecione o setor"
-                    />
-                  </div>
-                  <button className="flex items-center justify-center p-2.5 bg-[#25243a] border border-[#32304a] rounded-lg text-white hover:bg-[#2c2b42] transition-colors">
-                    <Filter className="h-5 w-5" />
-                  </button>
-                </div>
+                
+                {/* Botão para ir para página de conversas */}
+                <button 
+                  onClick={() => navigate('/conversations')}
+                  className="w-full py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
+                >
+                  <MessageCircle className="h-4 w-4" />
+                  <span>Ver Todas as Conversas</span>
+                </button>
               </div>
-            </div>
-            
-            {/* Botão para ir para página de conversas */}
-            <div className="flex justify-center">
-              <button 
-                onClick={() => navigate('/conversations')}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-              >
-                Ver Todas as Conversas
-              </button>
             </div>
           </div>
         );
@@ -920,26 +866,14 @@ const WhatsAppDashboard = () => {
 
   return (
     <div className="min-h-screen bg-[#0c0b14] text-white overflow-x-hidden">
-      <ParticleBackground />
-      
       {/* Main Content */}
       <div className="flex flex-col min-h-screen">
         {/* Top Navigation Bar */}
-        <header ref={headerRef} className="sticky top-0 z-20 h-16 bg-[#0c0b14]/80 backdrop-blur-lg border-b border-[#1e1d2b] px-4 md:px-6 flex items-center justify-between">
+        <header ref={headerRef} className="sticky top-0 z-20 h-14 md:h-16 bg-[#0c0b14]/80 backdrop-blur-lg border-b border-[#1e1d2b] px-4 md:px-6 flex items-center justify-between">
           {/* Brand & Title */}
-          <div className="flex items-center gap-3">
-            <div className="block md:hidden">
-              <div className="bg-green-600 rounded-lg p-1.5 h-8 w-8 flex items-center justify-center">
-                <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16m-7 6h7" />
-                </svg>
-              </div>
-            </div>
-            
-            <h1 className="text-xl font-semibold flex items-center gap-2">
-              <span>Visão Geral</span>
-            </h1>
-          </div>
+          <h1 className="text-xl font-semibold flex items-center gap-2">
+            <span className="ml-8 md:ml-0">Dashboard</span>
+          </h1>
           
           {/* Navigation Tabs */}
           <div className="hidden md:flex items-center gap-1 mx-auto bg-[#1e1d2b] rounded-lg p-1">
@@ -987,17 +921,36 @@ const WhatsAppDashboard = () => {
           </div>
           
           {/* Mobile Tab Selector */}
-          <div className="md:hidden relative z-30">
-            <CustomShadcnSelect 
-              value={activeTab}
-              onChange={(value) => setActiveTab(value)}
-              options={[
-                { value: 'overview', label: 'Visão Geral' },
-                { value: 'analytics', label: 'Análise' },
-                { value: 'conversations', label: 'Conversas' }
-              ]}
-              placeholder="Selecione a aba"
-            />
+          <div className="md:hidden flex gap-2">
+            <button 
+              className={`p-2 rounded-lg transition-colors ${
+                activeTab === 'overview' ? 'bg-green-600 text-white' : 'bg-[#1e1d2b] text-gray-400'
+              }`}
+              onClick={() => setActiveTab('overview')}
+              aria-label="Visão Geral"
+            >
+              <MessageCircle className="h-5 w-5" />
+            </button>
+            
+            <button 
+              className={`p-2 rounded-lg transition-colors ${
+                activeTab === 'analytics' ? 'bg-green-600 text-white' : 'bg-[#1e1d2b] text-gray-400'
+              }`}
+              onClick={() => setActiveTab('analytics')}
+              aria-label="Análise"
+            >
+              <BarChart2 className="h-5 w-5" />
+            </button>
+            
+            <button 
+              className={`p-2 rounded-lg transition-colors ${
+                activeTab === 'conversations' ? 'bg-green-600 text-white' : 'bg-[#1e1d2b] text-gray-400'
+              }`}
+              onClick={() => setActiveTab('conversations')}
+              aria-label="Conversas"
+            >
+              <MessageSquare className="h-5 w-5" />
+            </button>
           </div>
           
           {/* Notifications */}
@@ -1011,49 +964,14 @@ const WhatsAppDashboard = () => {
                 <span className="absolute top-1 right-1 h-2.5 w-2.5 bg-green-500 rounded-full"></span>
               )}
             </button>
-            
-            {/* Notifications Dropdown */}
-            {showNotifications && (
-              <div className="absolute right-0 mt-2 w-80 bg-[#1e1d2b] border border-[#32304a] rounded-lg shadow-lg p-3 z-50 animate-fadeIn">
-                <h3 className="text-white font-medium px-2 pb-2 border-b border-[#32304a] mb-2 flex items-center justify-between">
-                  Notificações
-                  <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full">
-                    {displayedNotifications.filter(n => n.isNew).length} novas
-                  </span>
-                </h3>
-                <div className="space-y-2 max-h-72 overflow-y-auto">
-                  {displayedNotifications.map(notification => (
-                    <div 
-                      key={notification.id} 
-                      className={`px-2 py-2 hover:bg-[#25243a] rounded-lg cursor-pointer transition-colors ${notification.isNew ? 'border-l-2 border-green-500 pl-2' : ''}`}
-                    >
-                      <div className="flex justify-between">
-                        <h4 className="text-white text-sm font-medium">{notification.title}</h4>
-                        <span className="text-xs text-gray-400">{
-                          typeof notification.time === 'string' && (notification.time.includes('atrás') || notification.time.includes('min') || notification.time.includes('hora'))
-                            ? notification.time
-                            : timeAgo(notification.time)
-                        }</span>
-                      </div>
-                      <p className="text-gray-400 text-xs mt-1">{notification.description}</p>
-                    </div>
-                  ))}
-                </div>
-                <div className="pt-2 mt-2 border-t border-[#32304a] text-center">
-                  <button className="text-green-500 hover:text-green-400 text-sm">
-                    Ver todas notificações
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         </header>
         
-        {/* Filters Bar */}
-        <div className="bg-[#0c0b14]/50 backdrop-blur-md border-b border-[#1e1d2b] p-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Filters Bar - Simplificado para mobile */}
+        <div className="bg-[#0c0b14]/50 backdrop-blur-md border-b border-[#1e1d2b] p-3 md:p-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3">
             {/* Time Range Filter */}
-            <CustomShadcnSelect
+            <CustomSelect
               value={timeRange}
               onChange={setTimeRange}
               options={[
@@ -1065,46 +983,38 @@ const WhatsAppDashboard = () => {
               placeholder="Selecione o período"
             />
             
-            {/* Sector Filter */}
-            <CustomShadcnSelect
-              value={selectedSector}
-              onChange={setSelectedSector}
-              options={[
-                { value: 'all', label: 'Todos os Setores' },
-                ...(filteredData?.sectors || []).map(sector => ({ value: sector, label: sector }))
-              ]}
-              placeholder="Selecione o setor"
-            />
-            
-            {/* Agent Filter */}
-            <CustomShadcnSelect
-              value={selectedAgent}
-              onChange={setSelectedAgent}
-              options={[
-                { value: 'all', label: 'Todos os Atendentes' },
-                ...(filteredData?.agentData || []).map(agent => ({ value: agent.id.toString(), label: agent.name }))
-              ]}
-              placeholder="Selecione o atendente"
-            />
-            
-            {/* Search */}
-            <div className="relative">
-              <input 
-                type="text" 
-                placeholder="Busca rápida..." 
-                className="w-full h-10 pl-9 pr-4 rounded-lg bg-[#1e1d2b] border border-[#32304a] text-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            {/* Sector Filter - Only show on larger screens */}
+            <div className="hidden sm:block">
+              <CustomSelect
+                value={selectedSector}
+                onChange={setSelectedSector}
+                options={[
+                  { value: 'all', label: 'Todos os Setores' },
+                  ...(filteredData?.sectors || []).map(sector => ({ value: sector, label: sector }))
+                ]}
+                placeholder="Selecione o setor"
               />
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+            </div>
+            
+            {/* Refresh button for mobile */}
+            <div className="sm:hidden">
+              <button
+                onClick={carregarDados}
+                className="w-full flex items-center justify-center gap-2 bg-[#1e1d2b] text-gray-300 rounded-lg py-2.5 px-3 hover:bg-[#32313f]"
+              >
+                <RefreshCw className="h-4 w-4" />
+                <span>Atualizar</span>
+              </button>
             </div>
           </div>
         </div>
         
         {/* Main Content */}
-        <div className="p-4 md:p-6 flex-1 overflow-auto">
+        <div className="p-3 md:p-6 flex-1 overflow-auto">
           {renderContent()}
           
-          {/* Footer */}
-          <div className="mt-8 text-center">
+          {/* Footer - Hidden on mobile */}
+          <div className="mt-6 md:mt-8 text-center hidden md:block">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#1e1d2b] text-sm text-gray-400 border border-[#32304a]">
               <RefreshCw className="h-3.5 w-3.5 text-green-400 animate-spin-slow" />
               <span>
@@ -1114,75 +1024,6 @@ const WhatsAppDashboard = () => {
           </div>
         </div>
       </div>
-      
-      {/* CSS Styles */}
-      <style jsx="true">{`
-        @keyframes float {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-10px); }
-        }
-        
-        @keyframes spin-slow {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-        
-        @keyframes fadeInUp {
-          from { 
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          to { 
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        
-        .animate-fadeIn {
-          animation: fadeIn 0.5s ease-out forwards;
-        }
-        
-        .animate-fadeInUp {
-          animation: fadeInUp 0.6s ease-out forwards;
-        }
-        
-        .animate-spin-slow {
-          animation: spin-slow 3s linear infinite;
-        }
-        
-        .delay-100 {
-          animation-delay: 100ms;
-        }
-        
-        .delay-200 {
-          animation-delay: 200ms;
-        }
-        
-        .delay-300 {
-          animation-delay: 300ms;
-        }
-        
-        .delay-400 {
-          animation-delay: 400ms;
-        }
-        
-        .delay-500 {
-          animation-delay: 500ms;
-        }
-        
-        .delay-600 {
-          animation-delay: 600ms;
-        }
-        
-        .delay-700 {
-          animation-delay: 700ms;
-        }
-      `}</style>
     </div>
   );
 };

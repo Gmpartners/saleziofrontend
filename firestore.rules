@@ -1,9 +1,72 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if false;
+    // Função para verificar se o usuário está autenticado
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Função para verificar se o usuário é administrador
+    function isAdmin() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // Função para verificar se o usuário é atendente/agente
+    function isAgent() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'attendant' || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'agent');
+    }
+    
+    // Função para verificar se a conversa pertence ao setor do usuário
+    function isInUserSector(conversaData) {
+      let userData = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return userData.role == 'admin' || 
+             (userData.setor != null && 
+              (userData.setor.id == conversaData.setorId || userData.setor.id == conversaData.setor));
+    }
+    
+    // Regras para usuários
+    match /users/{userId} {
+      // Usuários podem ler e atualizar apenas seu próprio perfil
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
+    
+    // Regras para conversas
+    match /conversas/{conversaId} {
+      // Verificar se o usuário tem acesso à conversa baseado no setor
+      allow read: if isAuthenticated() && 
+                    (isAdmin() || resource == null || isInUserSector(resource.data));
+      
+      // Apenas atendentes e admins podem criar/atualizar conversas
+      allow create: if isAuthenticated() && (isAgent() || isAdmin());
+      allow update: if isAuthenticated() && (isAdmin() || isInUserSector(resource.data));
+      allow delete: if isAdmin();
+      
+      // Regras para mensagens dentro de conversas
+      match /mensagens/{mensagemId} {
+        allow read: if isAuthenticated() && 
+                      (isAdmin() || isInUserSector(get(/databases/$(database)/documents/conversas/$(conversaId)).data));
+        allow create: if isAuthenticated() && 
+                      (isAdmin() || isInUserSector(get(/databases/$(database)/documents/conversas/$(conversaId)).data));
+        allow update, delete: if isAdmin();
+      }
+    }
+    
+    // Configurações gerais
+    match /configuracoes/{configId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    // Resumos
+    match /resumos/{resumoId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
   }
 }

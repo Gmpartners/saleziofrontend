@@ -1,218 +1,200 @@
-// components/app-sidebar.jsx
-import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+// app-sidebar.jsx
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import { 
-  MessageSquare, BarChart2, Users, Settings, 
-  LogOut, Bell, HelpCircle, UserCircle,
-  Briefcase, LayoutDashboard, Shield
+  MessageSquare, BarChart3, Bell, Settings, 
+  HelpCircle, LogOut, ChevronRight, User
 } from 'lucide-react';
-
 import { useAuthContext } from '../hooks/useAuthContext';
+import { motion } from 'framer-motion';
+
+// Importar componentes do shadcn/ui
+import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
+import { Badge } from "../components/ui/badge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../components/ui/tooltip";
 
 export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
+  const { userProfile, logout, isAdmin } = useAuthContext();
+  const navigate = useNavigate();
   const location = useLocation();
-  const { logout, user, userProfile, isAdmin, userSector, userSectorName } = useAuthContext();
-  
-  // Itens de navegação para todos os usuários
-  const commonNavItems = [
+  const [initials, setInitials] = useState('');
+
+  // Calcular iniciais do nome de usuário
+  useEffect(() => {
+    if (userProfile?.displayName) {
+      const nameParts = userProfile.displayName.split(' ');
+      const firstInitial = nameParts[0] ? nameParts[0][0] : '';
+      const lastInitial = nameParts.length > 1 ? nameParts[nameParts.length - 1][0] : '';
+      setInitials((firstInitial + lastInitial).toUpperCase());
+    }
+  }, [userProfile]);
+
+  // Navegação de menu
+  const handleNavigation = (path) => {
+    navigate(path);
+    closeSidebar();
+  };
+
+  // Definir itens do menu para usuários normais
+  const regularUserItems = [
     { 
-      name: 'Conversas', 
-      path: '/conversations', 
-      icon: <MessageSquare className="h-5 w-5" />,
-      active: location.pathname === '/conversations' || location.pathname.startsWith('/conversations/')
+      id: 'conversations', 
+      icon: <MessageSquare className="w-5 h-5" />, 
+      label: 'Conversas', 
+      path: '/conversations',
+      active: location.pathname.includes('/conversations')
     },
     { 
-      name: 'Análise', 
-      path: '/analytics', 
-      icon: <BarChart2 className="h-5 w-5" />,
+      id: 'analytics', 
+      icon: <BarChart3 className="w-5 h-5" />, 
+      label: 'Análise', 
+      path: '/analytics',
       active: location.pathname === '/analytics'
     },
     { 
-      name: 'Notificações', 
-      path: '/notifications', 
-      icon: <Bell className="h-5 w-5" />,
+      id: 'notifications', 
+      icon: <Bell className="w-5 h-5" />, 
+      label: 'Notificações', 
+      path: '/notifications',
       active: location.pathname === '/notifications'
-    }
-  ];
-  
-  // Itens de navegação para administradores
-  const adminNavItems = [
-    { 
-      name: 'Painel Admin', 
-      path: '/admin', 
-      icon: <LayoutDashboard className="h-5 w-5" />,
-      active: location.pathname === '/admin',
-      adminOnly: true
     },
     { 
-      name: 'Usuários', 
-      path: '/admin/users', 
-      icon: <Users className="h-5 w-5" />,
-      active: location.pathname === '/admin/users',
-      adminOnly: true
+      id: 'settings', 
+      icon: <Settings className="w-5 h-5" />, 
+      label: 'Configurações', 
+      path: '/settings',
+      active: location.pathname === '/settings'
     },
     { 
-      name: 'Setores', 
-      path: '/admin/sectors', 
-      icon: <Briefcase className="h-5 w-5" />,
-      active: location.pathname === '/admin/sectors',
-      adminOnly: true
-    },
-    { 
-      name: 'Estatísticas', 
-      path: '/admin/analytics', 
-      icon: <BarChart2 className="h-5 w-5" />,
-      active: location.pathname === '/admin/analytics',
-      adminOnly: true
-    }
-  ];
-  
-  // Combinar os itens com base no papel do usuário
-  const navItems = isAdmin 
-    ? [...commonNavItems, ...adminNavItems]
-    : commonNavItems;
-  
-  // Itens de configurações (rodapé)
-  const settingsItems = [
-    { 
-      name: 'Configurações', 
-      path: '/profile', 
-      icon: <Settings className="h-5 w-5" />, 
-      active: location.pathname === '/profile'
-    },
-    { 
-      name: 'Ajuda', 
-      path: '/help', 
-      icon: <HelpCircle className="h-5 w-5" />,
+      id: 'help', 
+      icon: <HelpCircle className="w-5 h-5" />, 
+      label: 'Ajuda', 
+      path: '/help',
       active: location.pathname === '/help'
     }
   ];
-  
-  // Dados do usuário para exibição
-  const displayName = userProfile?.displayName || user?.displayName || user?.email || 'Usuário';
-  const initials = displayName
-    .split(' ')
-    .map(n => n[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
-  
-  // Função de logout
-  const handleLogout = () => {
-    logout();
-  };
-  
+
+  // Itens administrativos adicionais
+  const adminItems = [
+    // Adicionar aqui itens administrativos se necessário
+  ];
+
+  // Determinar quais itens de menu mostrar
+  const menuItems = isAdmin ? [...regularUserItems, ...adminItems] : regularUserItems;
+
   return (
-    <div className="flex flex-col h-full bg-[#1e1d2b] border-r border-[#32304a] overflow-hidden">
-      {/* Header/Logo */}
-      <div className="p-4 border-b border-[#32304a] flex items-center justify-center h-16">
-        <div className="flex items-center">
-          <div className="h-8 w-8 rounded-md bg-green-600 flex items-center justify-center">
+    <div className="h-full flex flex-col bg-[#070b11] border-r border-[#1f2937]/40 shadow-lg">
+      {/* Header */}
+      <div className="p-4 border-b border-[#1f2937]/40">
+        <div className="flex items-center gap-3">
+          <div className="flex-shrink-0 bg-gradient-to-br from-[#10b981] to-[#059669] p-2 rounded-lg shadow-md">
             <MessageSquare className="h-5 w-5 text-white" />
           </div>
           {!collapsed && (
-            <h1 className="text-white text-lg font-bold ml-3">MultiFlow</h1>
+            <motion.h1 
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#10b981] to-[#059669]"
+            >
+              MultiFlow
+            </motion.h1>
           )}
         </div>
       </div>
-      
-      {/* Informações do usuário */}
-      <div className="mt-4 px-3">
-        <div className={`flex ${collapsed ? 'justify-center' : 'items-center'} mb-2`}>
-          <div className="h-10 w-10 rounded-full bg-green-600 flex items-center justify-center text-white text-sm font-medium">
-            {initials || <UserCircle className="h-6 w-6" />}
-          </div>
-          
-          {!collapsed && (
-            <div className="ml-3 overflow-hidden">
-              <p className="text-white font-medium truncate" title={displayName}>
-                {displayName}
-              </p>
-              <p className="text-xs text-gray-400 truncate">
-                {isAdmin ? (
-                  <span className="flex items-center text-purple-400">
-                    <Shield className="h-3 w-3 mr-1" />
-                    Administrador
-                  </span>
-                ) : (
-                  <span className="text-blue-400">Atendente</span>
-                )}
-              </p>
-            </div>
-          )}
-        </div>
+
+      {/* User Profile */}
+      <div 
+        className={`mt-4 mx-3 p-3 rounded-lg transition-all duration-300 ${collapsed ? "justify-center" : ""} 
+        flex items-center gap-3 bg-[#0f1621] border border-[#1f2937]/40 hover:bg-[#101820] cursor-pointer`}
+      >
+        <Avatar className="border-2 border-[#10b981]/30 h-10 w-10 shadow-md">
+          <AvatarImage src={userProfile?.photoURL} />
+          <AvatarFallback className="bg-gradient-to-br from-[#10b981] to-[#059669] text-white">
+            {initials}
+          </AvatarFallback>
+        </Avatar>
         
-        {/* Exibir setor (se não for admin e não estiver colapsado) */}
-        {!isAdmin && userSectorName && !collapsed && (
-          <div className="px-2 py-1 bg-blue-600/10 text-blue-400 rounded-lg text-xs mb-4 flex items-center">
-            <Briefcase className="h-3 w-3 mr-1" />
-            <span className="truncate">{userSectorName}</span>
+        {!collapsed && (
+          <div className="flex flex-col overflow-hidden">
+            <p className="text-sm font-medium text-white truncate">
+              {userProfile?.displayName || 'Usuário'}
+            </p>
+            <div className="flex flex-wrap items-center gap-2 mt-1">
+              <Badge variant="success" className="px-2 py-0.5 text-xs">
+                Atendente
+              </Badge>
+              {userProfile?.sector && (
+                <span className="inline-block px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded-md text-xs">
+                  {userProfile.sector}
+                </span>
+              )}
+            </div>
           </div>
         )}
       </div>
-      
-      {/* Menu de navegação */}
-      <div className="px-3 py-4 flex-1 overflow-y-auto scrollbar-thin">
-        <nav>
-          <ul className="space-y-1">
-            {navItems.map((item) => (
-              <li key={item.path}>
-                <Link 
-                  to={item.path} 
-                  className={`flex items-center ${collapsed ? 'justify-center p-2' : 'px-3 py-2'} rounded-lg transition-colors ${
-                    item.active 
-                      ? 'bg-green-600 text-white' 
-                      : 'text-gray-400 hover:bg-[#32304a] hover:text-white'
-                  }`}
-                  onClick={closeSidebar}
-                >
-                  {item.icon}
-                  {!collapsed && <span className="ml-3">{item.name}</span>}
-                  
-                  {/* Indicador de admin */}
-                  {!collapsed && item.adminOnly && (
-                    <span className="ml-auto bg-purple-500/20 text-purple-400 text-xs px-1.5 py-0.5 rounded">
-                      Admin
-                    </span>
-                  )}
-                </Link>
-              </li>
-            ))}
-          </ul>
-          
-          {/* Divisor */}
-          <div className="my-4 border-t border-[#32304a]"></div>
-          
-          {/* Menu secundário */}
-          <ul className="space-y-1">
-            {settingsItems.map((item) => (
-              <li key={item.path}>
-                <Link 
-                  to={item.path} 
-                  className={`flex items-center ${collapsed ? 'justify-center p-2' : 'px-3 py-2'} rounded-lg transition-colors ${
-                    item.active 
-                      ? 'bg-[#32304a] text-white' 
-                      : 'text-gray-400 hover:bg-[#32304a] hover:text-white'
-                  }`}
-                  onClick={closeSidebar}
-                >
-                  {item.icon}
-                  {!collapsed && <span className="ml-3">{item.name}</span>}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      </div>
-      
-      {/* Footer / Botão de Logout */}
-      <div className="p-3 border-t border-[#32304a]">
-        <button 
-          onClick={handleLogout}
-          className={`w-full flex items-center ${collapsed ? 'justify-center p-2' : 'px-3 py-2'} rounded-lg text-gray-400 hover:bg-[#32304a] hover:text-white transition-colors`}
+
+      {/* Menu Items */}
+      <nav className="mt-5 flex-1 px-3">
+        <ul className="space-y-1">
+          {menuItems.map((item) => (
+            <TooltipProvider key={item.id} delayDuration={150}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <li 
+                    onClick={() => handleNavigation(item.path)}
+                    className={`
+                      flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer
+                      transition-all duration-200 group
+                      ${item.active 
+                        ? 'bg-[#10b981]/10 text-[#10b981]' 
+                        : 'text-slate-400 hover:bg-[#101820] hover:text-white'}
+                    `}
+                  >
+                    <div className={`
+                      flex-shrink-0 transition-all duration-200
+                      ${item.active ? 'text-[#10b981]' : 'text-slate-400 group-hover:text-white'}
+                    `}>
+                      {item.icon}
+                    </div>
+                    
+                    {!collapsed && (
+                      <motion.span 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="text-sm font-medium transition-all"
+                      >
+                        {item.label}
+                      </motion.span>
+                    )}
+                    
+                    {!collapsed && item.active && (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.6 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="ml-auto h-2 w-2 rounded-full bg-[#10b981]"
+                      />
+                    )}
+                  </li>
+                </TooltipTrigger>
+                {collapsed && (
+                  <TooltipContent side="right" className="bg-[#0f1621] text-white border-[#1f2937]/40">
+                    {item.label}
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
+          ))}
+        </ul>
+      </nav>
+
+      {/* Logout */}
+      <div className="mt-auto mb-4 px-3">
+        <button
+          onClick={logout}
+          className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-slate-400 hover:bg-[#101820] hover:text-white transition-all"
         >
           <LogOut className="h-5 w-5" />
-          {!collapsed && <span className="ml-3">Sair</span>}
+          {!collapsed && <span className="text-sm">Sair</span>}
         </button>
       </div>
     </div>

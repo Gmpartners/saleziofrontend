@@ -1,0 +1,291 @@
+// context/SocketContext.jsx
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import socketService from '../services/socket';
+import apiService from '../services/api';
+import { useAuthContext } from '../hooks/useAuthContext';
+import { MultiFlowEventosMap, MultiFlowStatusMap } from '../models/multiflow';
+
+// Criar contexto para WebSocket
+const SocketContext = createContext(null);
+
+// Hook para acessar o contexto
+export const useSocket = () => useContext(SocketContext);
+
+export const SocketProvider = ({ children }) => {
+  const { user } = useAuthContext();
+  const [isConnected, setIsConnected] = useState(false);
+  const [conversations, setConversations] = useState([]);
+  const [selectedConversation, setSelectedConversation] = useState(null);
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  
+  // Usar uma ref para rastrear a conversa selecionada sem causar re-renders
+  const selectedConversationIdRef = useRef(null);
+
+  // Configurar conexão e listeners do WebSocket
+  useEffect(() => {
+    if (!user) return;
+
+    try {
+      // Conectar ao serviço de WebSocket
+      socketService.connect()
+        .then(() => {
+          setIsConnected(true);
+          
+          // Solicitar lista inicial de conversas
+          refreshConversations();
+        })
+        .catch(error => {
+          console.error('Erro ao conectar WebSocket:', error);
+        });
+      
+      // Configurar listeners para eventos do WebSocket
+      socketService
+        .on('connect', () => {
+          setIsConnected(true);
+          refreshConversations();
+        })
+        .on('disconnect', () => {
+          setIsConnected(false);
+        })
+        // Eventos específicos da API MultiFlow
+        .on(MultiFlowEventosMap.NOVA_CONVERSA, (data) => {
+          console.log('Nova conversa:', data);
+          // Adicionar nova conversa ao início da lista
+          if (data.conversa) {
+            setConversations(prev => [data.conversa, ...prev]);
+          }
+        })
+        .on(MultiFlowEventosMap.NOVA_MENSAGEM, (data) => {
+          console.log('Nova mensagem:', data);
+          
+          // Atualizar mensagens da conversa selecionada
+          if (selectedConversationIdRef.current === data.conversaId) {
+            setSelectedConversation(prev => {
+              if (!prev) return null;
+              
+              return {
+                ...prev,
+                mensagens: [...prev.mensagens, data.mensagem]
+              };
+            });
+          }
+          
+          // Atualizar a lista de conversas
+          setConversations(prev => 
+            prev.map(conv => 
+              conv._id === data.conversaId
+                ? { 
+                    ...conv, 
+                    ultimaMensagem: data.mensagem.conteudo,
+                    ultimaAtividade: data.mensagem.timestamp
+                  }
+                : conv
+            )
+          );
+        })
+        .on(MultiFlowEventosMap.CONVERSA_ATUALIZADA, (data) => {
+          console.log('Conversa atualizada:', data);
+          
+          // Atualizar a conversa na lista
+          if (data.conversa) {
+            setConversations(prev =>
+              prev.map(conv =>
+                conv._id === data.conversa._id ? data.conversa : conv
+              )
+            );
+            
+            // Atualizar a conversa selecionada se for a mesma
+            if (selectedConversationIdRef.current === data.conversa._id) {
+              setSelectedConversation(prev => ({
+                ...prev,
+                ...data.conversa
+              }));
+            }
+          }
+        });
+    } catch (error) {
+      console.error('Erro ao configurar WebSocket:', error);
+    }
+    
+    // Limpar ao desmontar o componente
+    return () => {
+      if (socketService) {
+        socketService.disconnect();
+      }
+    };
+  }, [user]); // Remover selectedConversation das dependências
+
+  // Atualizar a referência quando a conversa selecionada mudar
+  useEffect(() => {
+    if (selectedConversation) {
+      selectedConversationIdRef.current = selectedConversation._id;
+    } else {
+      selectedConversationIdRef.current = null;
+    }
+  }, [selectedConversation]);
+
+  // Selecionar uma conversa
+  const selectConversation = useCallback(async (conversationId) => {
+    try {
+      // Buscar detalhes da conversa pela API
+      const response = await apiService.getConversaById(conversationId);
+      
+      if (response.success && response.data) {
+        // Atualizar o estado com a conversa completa
+        setSelectedConversation(response.data);
+        
+        // Entrar na sala da conversa para receber atualizações
+        socketService.joinConversaRoom(conversationId);
+        
+        // Atualizar status para em_andamento se estiver aguardando
+        if (response.data.status === MultiFlowStatusMap.AGUARDANDO) {
+          apiService.atualizarStatusConversa(conversationId, MultiFlowStatusMap.EM_ANDAMENTO);
+        }
+      } else {
+        console.error('Erro ao obter detalhes da conversa:', response);
+      }
+    } catch (error) {
+      console.error('Erro ao selecionar conversa:', error);
+    }
+  }, []);
+
+  // Enviar mensagem em uma conversa
+  const sendMessage = useCallback((conversationId, text) => {
+    try {
+      // Usar a API REST para enviar a mensagem
+      apiService.enviarMensagem(conversationId, text)
+        .then(response => {
+          console.log('Mensagem enviada com sucesso:', response);
+        })
+        .catch(error => {
+          console.error('Erro ao enviar mensagem:', error);
+        });
+    } catch (error) {
+      console.error('Erro ao enviar mensagem:', error);
+    }
+  }, []);
+
+  // Transferir conversa para outro setor
+  const transferConversation = useCallback((conversationId, sectorId) => {
+    try {
+      // Usar a API REST para transferir a conversa
+      apiService.transferirConversa(conversationId, sectorId)
+        .then(response => {
+          console.log('Conversa transferida com sucesso:', response);
+          
+          // Limpar a seleção se a conversa transferida era a selecionada
+          if (selectedConversationIdRef.current === conversationId) {
+            setSelectedConversation(null);
+          }
+          
+          // Remover da lista de conversas ativas
+          setConversations(prev => 
+            prev.filter(conv => conv._id !== conversationId)
+          );
+        })
+        .catch(error => {
+          console.error('Erro ao transferir conversa:', error);
+        });
+    } catch (error) {
+      console.error('Erro ao transferir conversa:', error);
+    }
+  }, []);
+
+  // Finalizar conversa
+  const finishConversation = useCallback((conversationId) => {
+    try {
+      // Usar a API REST para finalizar a conversa
+      apiService.finalizarConversa(conversationId)
+        .then(response => {
+          console.log('Conversa finalizada com sucesso:', response);
+          
+          // Limpar a seleção se a conversa finalizada era a selecionada
+          if (selectedConversationIdRef.current === conversationId) {
+            setSelectedConversation(null);
+          }
+          
+          // Remover da lista de conversas ativas
+          setConversations(prev => 
+            prev.filter(conv => conv._id !== conversationId)
+          );
+        })
+        .catch(error => {
+          console.error('Erro ao finalizar conversa:', error);
+        });
+    } catch (error) {
+      console.error('Erro ao finalizar conversa:', error);
+    }
+  }, []);
+
+  // Arquivar conversa
+  const archiveConversation = useCallback((conversationId) => {
+    try {
+      // Usar a API REST para arquivar a conversa
+      apiService.arquivarConversa(conversationId)
+        .then(response => {
+          console.log('Conversa arquivada com sucesso:', response);
+          
+          // Limpar a seleção se a conversa arquivada era a selecionada
+          if (selectedConversationIdRef.current === conversationId) {
+            setSelectedConversation(null);
+          }
+          
+          // Remover da lista de conversas ativas
+          setConversations(prev => 
+            prev.filter(conv => conv._id !== conversationId)
+          );
+        })
+        .catch(error => {
+          console.error('Erro ao arquivar conversa:', error);
+        });
+    } catch (error) {
+      console.error('Erro ao arquivar conversa:', error);
+    }
+  }, []);
+
+  // Atualizar lista de conversas
+  const refreshConversations = useCallback((filters = {}) => {
+    try {
+      // Usar a API REST para buscar conversas
+      apiService.getConversas({
+        status: filters.status || [MultiFlowStatusMap.AGUARDANDO, MultiFlowStatusMap.EM_ANDAMENTO],
+        setorId: filters.setorId,
+        arquivada: filters.arquivada,
+        page: filters.page || 1,
+        limit: filters.limit || 20
+      })
+        .then(response => {
+          if (response.success && response.data) {
+            setConversations(response.data);
+          } else {
+            console.error('Erro na resposta ao buscar conversas:', response);
+          }
+        })
+        .catch(error => {
+          console.error('Erro ao buscar conversas:', error);
+        });
+    } catch (error) {
+      console.error('Erro ao atualizar conversas:', error);
+    }
+  }, []);
+
+  // Valores expostos pelo contexto
+  const value = {
+    isConnected,
+    conversations,
+    selectedConversation,
+    onlineUsers,
+    selectConversation,
+    sendMessage,
+    transferConversation,
+    finishConversation,
+    archiveConversation,
+    refreshConversations
+  };
+
+  return (
+    <SocketContext.Provider value={value}>
+      {children}
+    </SocketContext.Provider>
+  );
+};

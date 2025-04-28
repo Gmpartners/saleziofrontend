@@ -23,8 +23,24 @@ dist-ssr
 *.sln
 *.sw?
 
-# Environment variables
+# Environment files
 .env
+.env.*
+!.env.example
 
-# Firebase cache
+# Firebase
 .firebase/
+firebase-debug.log
+
+# Build files
+build/
+
+# Temporary files
+.tmp/
+.temp/
+
+# Sound files - these should be downloaded separately
+public/sounds/*.mp3
+public/sounds/*.wav
+public/sounds/*.ogg
+!public/sounds/README.md

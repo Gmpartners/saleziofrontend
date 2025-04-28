@@ -1,7 +1,8 @@
 import { createContext, useReducer, useEffect, useMemo } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "../firebase/config";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { multiflowApi } from "../services/multiflowApi";
 
 // Criando o contexto
 export const AuthContext = createContext();
@@ -12,7 +13,9 @@ const AUTH_ACTIONS = {
   LOGOUT: "LOGOUT",
   AUTH_IS_READY: "AUTH_IS_READY",
   AUTH_ERROR: "AUTH_ERROR",
-  SET_USER_PROFILE: "SET_USER_PROFILE"
+  SET_USER_PROFILE: "SET_USER_PROFILE",
+  SET_USER_SECTORS: "SET_USER_SECTORS",
+  SET_SYNC_STATUS: "SET_SYNC_STATUS"
 };
 
 // Reducer
@@ -29,6 +32,8 @@ const authReducer = (state, action) => {
         ...state, 
         user: null,
         userProfile: null,
+        sectors: [],
+        syncStatus: null,
         error: null 
       };
     case AUTH_ACTIONS.AUTH_IS_READY:
@@ -49,6 +54,17 @@ const authReducer = (state, action) => {
         userProfile: action.payload,
         error: null
       };
+    case AUTH_ACTIONS.SET_USER_SECTORS:
+      return {
+        ...state,
+        sectors: action.payload,
+        error: null
+      };
+    case AUTH_ACTIONS.SET_SYNC_STATUS:
+      return {
+        ...state,
+        syncStatus: action.payload
+      };
     default:
       return state;
   }
@@ -58,7 +74,9 @@ const authReducer = (state, action) => {
 const initialState = {
   user: null,
   userProfile: null,
+  sectors: [],
   authIsReady: false,
+  syncStatus: null,
   error: null
 };
 
@@ -75,22 +93,320 @@ export function AuthContextProvider({ children }) {
     },
     setError: (error) => dispatch({ type: AUTH_ACTIONS.AUTH_ERROR, payload: error }),
     setAuthReady: (user) => dispatch({ type: AUTH_ACTIONS.AUTH_IS_READY, payload: user }),
-    setUserProfile: (profile) => dispatch({ type: AUTH_ACTIONS.SET_USER_PROFILE, payload: profile })
+    setUserProfile: (profile) => dispatch({ type: AUTH_ACTIONS.SET_USER_PROFILE, payload: profile }),
+    setUserSectors: (sectors) => dispatch({ type: AUTH_ACTIONS.SET_USER_SECTORS, payload: sectors }),
+    setSyncStatus: (status) => dispatch({ type: AUTH_ACTIONS.SET_SYNC_STATUS, payload: status })
   }), []);
 
-  // Salvar dados básicos no localStorage para fallback
+  // Salvar dados no localStorage para fallback
   const saveUserToLocalStorage = (user, userData) => {
     if (user) {
       localStorage.setItem('userId', user.uid);
       localStorage.setItem('userEmail', user.email);
       
       if (userData) {
-        localStorage.setItem('userName', userData.displayName || 'Usuário');
-        localStorage.setItem('userDisplayName', userData.displayName || 'Usuário');
+        localStorage.setItem('userName', userData.displayName || userData.name || 'Usuário');
+        localStorage.setItem('userDisplayName', userData.displayName || userData.name || 'Usuário');
         localStorage.setItem('userRole', userData.role || 'agent');
-        localStorage.setItem('userSector', userData.sector || '');
-        localStorage.setItem('userSectorName', userData.sectorName || '');
+        
+        // Dados do setor (se existirem)
+        if (userData.setor) {
+          localStorage.setItem('userSectorId', userData.setor.id || '');
+          localStorage.setItem('userSectorName', userData.setor.nome || '');
+        } else {
+          localStorage.setItem('userSectorId', '');
+          localStorage.setItem('userSectorName', '');
+        }
       }
+    }
+  };
+
+  // Buscar setores disponíveis
+  const fetchUserSectors = async (userId) => {
+    try {
+      console.log(`Buscando setores para o usuário: ${userId}`);
+      actions.setSyncStatus({ status: 'syncing', message: 'Buscando setores...' });
+      
+      const response = await multiflowApi.getSetores(userId);
+      
+      if (response.success && Array.isArray(response.data)) {
+        console.log(`${response.data.length} setores encontrados`);
+        actions.setUserSectors(response.data);
+        actions.setSyncStatus({ 
+          status: 'success', 
+          message: `${response.data.length} setores encontrados`,
+          timestamp: new Date().toISOString()
+        });
+        return response.data;
+      } else {
+        console.log('Nenhum setor encontrado');
+        actions.setUserSectors([]);
+        actions.setSyncStatus({ 
+          status: 'warning', 
+          message: 'Nenhum setor encontrado',
+          timestamp: new Date().toISOString()
+        });
+        return [];
+      }
+    } catch (error) {
+      console.error('Erro ao buscar setores:', error);
+      
+      actions.setSyncStatus({ 
+        status: 'error', 
+        message: `Erro ao buscar setores: ${error.message}`,
+        timestamp: new Date().toISOString()
+      });
+      
+      return [];
+    }
+  };
+
+  // Sincroniza dados do setor do usuário com a API
+  const syncUserSector = async (userProfile) => {
+    if (!userProfile || !userProfile.setor) return null;
+    
+    try {
+      const userId = userProfile.id;
+      const setorData = userProfile.setor;
+      
+      actions.setSyncStatus({ status: 'syncing', message: 'Sincronizando setor do usuário...' });
+      
+      console.log('Verificando se o setor existe na API:', setorData);
+      
+      // Buscar setor pelo ID (se existir)
+      if (setorData._id) {
+        const setorResponse = await multiflowApi.getSetorById(setorData._id, userId);
+        
+        // Se o setor existir, retornar
+        if (setorResponse.success && setorResponse.data) {
+          console.log('Setor encontrado na API:', setorResponse.data);
+          actions.setSyncStatus({ 
+            status: 'success', 
+            message: 'Setor sincronizado com sucesso',
+            timestamp: new Date().toISOString()
+          });
+          return setorResponse.data;
+        }
+      }
+      
+      // Se chegou aqui, o setor não existe ou não foi possível encontrá-lo
+      // Tentar criar o setor
+      console.log('Criando setor na API:', setorData);
+      
+      const createResponse = await multiflowApi.createSetor({
+        nome: setorData.nome,
+        descricao: setorData.descricao,
+        responsavel: setorData.responsavel,
+        ativo: setorData.ativo
+      }, userId);
+      
+      if (createResponse.success && createResponse.data) {
+        console.log('Setor criado com sucesso na API:', createResponse.data);
+        
+        // Atualizar o ID do setor no Firestore
+        const userRef = doc(db, 'users', userId);
+        await updateDoc(userRef, {
+          'setor._id': createResponse.data._id,
+          syncStatus: "success",
+          lastSyncAttempt: new Date()
+        });
+        
+        actions.setSyncStatus({ 
+          status: 'success', 
+          message: 'Novo setor criado e sincronizado com sucesso',
+          timestamp: new Date().toISOString()
+        });
+        
+        return createResponse.data;
+      } else {
+        throw new Error(createResponse.error || 'Falha ao criar setor');
+      }
+    } catch (error) {
+      console.error('Erro ao sincronizar setor do usuário:', error);
+      
+      actions.setSyncStatus({ 
+        status: 'error', 
+        message: `Erro ao sincronizar setor: ${error.message}`,
+        timestamp: new Date().toISOString()
+      });
+      
+      return null;
+    }
+  };
+
+  // Função para atualizar setor do usuário
+  const updateUserSector = async (userId, setorData) => {
+    try {
+      if (!userId || !setorData || !setorData.nome) {
+        throw new Error("ID do usuário e dados do setor são obrigatórios");
+      }
+      
+      actions.setSyncStatus({ status: 'updating', message: 'Atualizando setor do usuário...' });
+      
+      // Preparar dados do setor
+      const setor = {
+        id: setorData.id || `setor-${Date.now()}`,
+        nome: setorData.nome,
+        descricao: setorData.descricao || `Setor ${setorData.nome}`,
+        responsavel: setorData.responsavel || "Administrador",
+        ativo: setorData.ativo !== false
+      };
+      
+      // Atualizar documento do usuário no Firestore
+      const userRef = doc(db, 'users', userId);
+      await updateDoc(userRef, {
+        setor: setor,
+        syncStatus: "pending",
+        lastSyncAttempt: new Date()
+      });
+      
+      // Verificar se já existe um setor com este ID na API
+      let apiResponse;
+      if (setorData._id) {
+        // Tentar atualizar o setor existente na API
+        apiResponse = await multiflowApi.updateSetor(setorData._id, {
+          nome: setor.nome,
+          descricao: setor.descricao,
+          responsavel: setor.responsavel,
+          ativo: setor.ativo
+        }, userId);
+      } else {
+        // Criar um novo setor na API
+        apiResponse = await multiflowApi.createSetor({
+          nome: setor.nome,
+          descricao: setor.descricao,
+          responsavel: setor.responsavel,
+          ativo: setor.ativo
+        }, userId);
+      }
+      
+      if (apiResponse.success && apiResponse.data) {
+        // Atualizar o ID do setor no Firestore com o ID da API
+        await updateDoc(userRef, {
+          'setor._id': apiResponse.data._id,
+          syncStatus: "success",
+          lastSyncAttempt: new Date()
+        });
+        
+        actions.setSyncStatus({ 
+          status: 'success', 
+          message: 'Setor atualizado com sucesso',
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        throw new Error(apiResponse.error || 'Falha ao sincronizar setor com a API');
+      }
+      
+      // Atualizar perfil local
+      await fetchUserProfile(auth.currentUser);
+      
+      return {
+        success: true,
+        setor: {
+          ...setor,
+          _id: apiResponse.data?._id
+        }
+      };
+    } catch (error) {
+      console.error('Erro ao atualizar setor do usuário:', error);
+      
+      actions.setSyncStatus({ 
+        status: 'error', 
+        message: `Erro ao atualizar setor: ${error.message}`,
+        timestamp: new Date().toISOString()
+      });
+      
+      throw error;
+    }
+  };
+
+  // Função para corrigir problemas de sincronização
+  const repairUserSync = async (userId) => {
+    try {
+      if (!userId) {
+        throw new Error("ID do usuário é obrigatório");
+      }
+      
+      actions.setSyncStatus({ status: 'repairing', message: 'Corrigindo sincronização do usuário...' });
+      
+      // Buscar dados do usuário no Firestore
+      const userRef = doc(db, 'users', userId);
+      const userDoc = await getDoc(userRef);
+      
+      if (!userDoc.exists()) {
+        throw new Error(`Usuário ${userId} não encontrado`);
+      }
+      
+      const userData = userDoc.data();
+      
+      // Verificar se o usuário tem um setor
+      if (!userData.setor) {
+        // Sem setor, apenas limpar status de sincronização
+        await updateDoc(userRef, {
+          syncStatus: "success",
+          syncError: null,
+          lastSyncAttempt: new Date()
+        });
+        
+        actions.setSyncStatus({ 
+          status: 'success', 
+          message: 'Sincronização reparada com sucesso (sem setor)',
+          timestamp: new Date().toISOString()
+        });
+        
+        return {
+          success: true,
+          message: "Sincronização reparada com sucesso"
+        };
+      }
+      
+      // Com setor, sincronizar com a API
+      const setorResult = await syncUserSector({
+        id: userId,
+        setor: userData.setor
+      });
+      
+      // Atualizar documento do usuário com resultado da sincronização
+      if (setorResult) {
+        await updateDoc(userRef, {
+          'setor._id': setorResult._id,
+          syncStatus: "success",
+          syncError: null,
+          lastSyncAttempt: new Date()
+        });
+      } else {
+        // Se não conseguiu sincronizar, pelo menos limpar o status de erro
+        await updateDoc(userRef, {
+          syncStatus: "warning",
+          syncError: "Não foi possível confirmar sincronização com a API",
+          lastSyncAttempt: new Date()
+        });
+      }
+      
+      // Atualizar perfil local
+      await fetchUserProfile(auth.currentUser);
+      
+      actions.setSyncStatus({ 
+        status: 'success', 
+        message: 'Sincronização reparada com sucesso',
+        timestamp: new Date().toISOString()
+      });
+      
+      return {
+        success: true,
+        message: "Sincronização reparada com sucesso",
+        setorResult
+      };
+    } catch (error) {
+      console.error('Erro ao reparar sincronização:', error);
+      
+      actions.setSyncStatus({ 
+        status: 'error', 
+        message: `Erro ao reparar sincronização: ${error.message}`,
+        timestamp: new Date().toISOString()
+      });
+      
+      throw error;
     }
   };
 
@@ -106,6 +422,14 @@ export function AuthContextProvider({ children }) {
       if (userDoc.exists()) {
         const userData = userDoc.data();
         
+        // Log para depuração
+        console.log('Dados do usuário obtidos do Firestore:', userData);
+        if (userData.setor) {
+          console.log('Dados do setor encontrados:', userData.setor);
+        } else {
+          console.log('Nenhum setor encontrado no documento do usuário');
+        }
+        
         // Criar perfil completo
         const userProfile = {
           ...userData,
@@ -113,13 +437,37 @@ export function AuthContextProvider({ children }) {
           email: user.email,
           // Garantir que o papel seja "admin" ou "agent"
           role: userData.role === 'admin' ? 'admin' : 'agent',
-          // Garantir que os campos de setorização existam
-          sector: userData.sector || '',
-          sectorName: userData.sectorName || ''
+          // Usar displayName ou name conforme disponível
+          displayName: userData.displayName || userData.name,
+          // Verificar se há dados do setor
+          setor: userData.setor || null
         };
         
         actions.setUserProfile(userProfile);
         saveUserToLocalStorage(user, userProfile);
+        
+        // Tentar buscar setores disponíveis na API
+        fetchUserSectors(user.uid).catch(err => {
+          console.warn('Erro ao buscar setores disponíveis:', err);
+        });
+        
+        // Verificar erros de sincronização
+        if (userData.syncStatus === 'error' && userData.syncError) {
+          console.warn(`Usuário com erro de sincronização: ${userData.syncError}`);
+          actions.setSyncStatus({ 
+            status: 'error', 
+            message: `Erro de sincronização: ${userData.syncError}`,
+            timestamp: new Date().toISOString()
+          });
+        } else if (userData.setor) {
+          // Se tiver setor, tentar sincronizar com a API
+          try {
+            await syncUserSector(userProfile);
+          } catch (syncError) {
+            console.error('Erro na sincronização do setor:', syncError);
+            // Continua mesmo se a sincronização falhar
+          }
+        }
         
         return userProfile;
       } else {
@@ -131,8 +479,7 @@ export function AuthContextProvider({ children }) {
           displayName: user.displayName || 'Usuário',
           email: user.email,
           role: 'agent',
-          sector: '',
-          sectorName: '',
+          setor: null,
           isActive: true
         };
         
@@ -150,8 +497,10 @@ export function AuthContextProvider({ children }) {
         displayName: localStorage.getItem('userDisplayName') || user.displayName || 'Usuário',
         email: localStorage.getItem('userEmail') || user.email,
         role: localStorage.getItem('userRole') || 'agent',
-        sector: localStorage.getItem('userSector') || '',
-        sectorName: localStorage.getItem('userSectorName') || ''
+        setor: localStorage.getItem('userSectorId') ? {
+          id: localStorage.getItem('userSectorId'),
+          nome: localStorage.getItem('userSectorName') || ''
+        } : null
       };
       
       actions.setUserProfile(fallbackProfile);
@@ -178,7 +527,7 @@ export function AuthContextProvider({ children }) {
         localStorage.removeItem('userDisplayName');
         localStorage.removeItem('userEmail');
         localStorage.removeItem('userRole');
-        localStorage.removeItem('userSector');
+        localStorage.removeItem('userSectorId');
         localStorage.removeItem('userSectorName');
         localStorage.removeItem('authToken');
       }
@@ -212,13 +561,14 @@ export function AuthContextProvider({ children }) {
     // Estado atual
     user: state.user,
     userProfile: state.userProfile,
+    sectors: state.sectors,
     authIsReady: state.authIsReady,
+    syncStatus: state.syncStatus,
     error: state.error,
     
     // Propriedades derivadas
     isAdmin: state.userProfile?.role === 'admin',
-    userSector: state.userProfile?.sector || '',
-    userSectorName: state.userProfile?.sectorName || '',
+    userSetor: state.userProfile?.setor || null,
     
     // Ações úteis
     login: actions.login,
@@ -230,8 +580,15 @@ export function AuthContextProvider({ children }) {
     // Helpers
     isAuthenticated: !!state.user,
     
+    // API relacionada
+    api: multiflowApi,
+    
     // Funções auxiliares
     fetchUserProfile,
+    fetchUserSectors,
+    updateUserSector,
+    repairUserSync,
+    syncUserSector,
     
     // Dispatch original (caso seja necessário)
     dispatch

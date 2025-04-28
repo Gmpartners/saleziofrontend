@@ -13,12 +13,12 @@ export default {
   // Safelist para classes dinâmicas importantes
   safelist: [
     // Classes fundamentais que podem ser geradas dinamicamente
-    'bg-purple-500',
-    'bg-purple-600',
-    'text-purple-400',
-    'text-purple-600',
-    'border-purple-500',
-    'border-purple-300',
+    'bg-[#10b981]',
+    'bg-[#059669]',
+    'text-[#10b981]',
+    'text-[#34d399]',
+    'border-[#10b981]',
+    'border-[#059669]',
   ],
   theme: {
     container: {
@@ -30,16 +30,16 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ['ABCGravityFallback', 'sans-serif']
+        sans: ['Inter', 'ABCGravityFallback', 'sans-serif']
       },
       colors: {
         tremor: {
-          faint: colors.blue[50],
-          muted: colors.blue[200],
-          subtle: colors.blue[400],
-          DEFAULT: colors.blue[500],
-          emphasis: colors.blue[700],
-          inverted: colors.white,
+          faint: '#0B1812',
+          muted: colors.emerald[900],
+          subtle: colors.emerald[800],
+          DEFAULT: colors.emerald[600],
+          emphasis: colors.emerald[400],
+          inverted: colors.slate[950],
         },
         border: {
           DEFAULT: "hsl(var(--border))",
@@ -85,33 +85,33 @@ export default {
           foreground: "hsl(var(--card-foreground))",
         },
         content: {
-          subtle: colors.gray[400],
-          DEFAULT: colors.gray[500],
-          emphasis: colors.gray[700],
-          strong: colors.gray[900],
-          inverted: colors.white,
+          subtle: colors.slate[400],
+          DEFAULT: colors.slate[300],
+          emphasis: colors.slate[200],
+          strong: colors.slate[50],
+          inverted: colors.slate[950],
         },
         'dark-tremor': {
           brand: {
-            faint: '#0B1229',
-            muted: colors.blue[950],
-            subtle: colors.blue[800],
-            DEFAULT: colors.blue[500],
-            emphasis: colors.blue[400],
-            inverted: colors.blue[950],
+            faint: '#0B1812',
+            muted: colors.emerald[950],
+            subtle: colors.emerald[800],
+            DEFAULT: colors.emerald[600],
+            emphasis: colors.emerald[400],
+            inverted: colors.slate[950],
           },
           border: {
-            DEFAULT: colors.gray[800],
+            DEFAULT: 'rgba(31, 41, 55, 0.4)',
           },
           ring: {
-            DEFAULT: colors.gray[800],
+            DEFAULT: 'rgba(16, 185, 129, 0.5)',
           },
           content: {
-            subtle: colors.gray[600],
-            DEFAULT: colors.gray[500],
-            emphasis: colors.gray[200],
-            strong: colors.gray[50],
-            inverted: colors.gray[950],
+            subtle: colors.slate[600],
+            DEFAULT: colors.slate[500],
+            emphasis: colors.slate[200],
+            strong: colors.slate[50],
+            inverted: colors.slate[950],
           },
         },
         sidebar: {
@@ -149,8 +149,11 @@ export default {
         'dark-tremor-input': '0 1px 2px 0 rgb(0 0 0 / 0.05)',
         'dark-tremor-card': '0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)',
         'dark-tremor-dropdown': '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)',
-        'glow-purple': '0 0 15px rgba(139, 92, 246, 0.5)',
-        'glow-purple-lg': '0 0 30px rgba(139, 92, 246, 0.7)',
+        'glow-green': '0 0 15px rgba(16, 185, 129, 0.3)',
+        'glow-green-lg': '0 0 25px rgba(16, 185, 129, 0.4)',
+        'button': '0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(16, 185, 129, 0.1)',
+        'panel': '0 8px 16px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.1)',
+        'panel-hover': '0 10px 25px rgba(0, 0, 0, 0.25), 0 2px 5px rgba(0, 0, 0, 0.15)',
       },
       fontSize: {
         'tremor-label': ['0.75rem', { lineHeight: '1rem' }],
@@ -159,7 +162,7 @@ export default {
         'tremor-metric': ['1.875rem', { lineHeight: '2.25rem' }],
       },
       keyframes: {
-        // Base keyframes - mantidos apenas os mais utilizados
+        // Base keyframes
         "accordion-down": {
           from: { height: "0" },
           to: { height: "var(--radix-accordion-content-height)" },
@@ -188,30 +191,30 @@ export default {
           to: { transform: 'rotate(360deg)' }
         },
         
-        // Animações importantes para FlowGenie
+        // Animações refinadas
         "pulse-slow": {
-          '0%, 100%': { opacity: '0.7' },
+          '0%, 100%': { opacity: '0.8' },
           '50%': { opacity: '1' },
         },
         "float": {
           '0%, 100%': { transform: 'translateY(0)' },
-          '50%': { transform: 'translateY(-10px)' },
+          '50%': { transform: 'translateY(-8px)' },
         },
         "scale-in": {
-          '0%': { transform: 'scale(0.95)', opacity: '0' },
+          '0%': { transform: 'scale(0.97)', opacity: '0' },
           '100%': { transform: 'scale(1)', opacity: '1' },
         },
         "fade-in-left": {
-          '0%': { transform: 'translateX(-15px)', opacity: '0' },
+          '0%': { transform: 'translateX(-10px)', opacity: '0' },
           '100%': { transform: 'translateX(0)', opacity: '1' },
         },
         "fade-in-right": {
-          '0%': { transform: 'translateX(15px)', opacity: '0' },
+          '0%': { transform: 'translateX(10px)', opacity: '0' },
           '100%': { transform: 'translateX(0)', opacity: '1' },
         },
         "glow-pulse": {
-          '0%, 100%': { boxShadow: '0 0 5px rgba(139, 92, 246, 0.3)' },
-          '50%': { boxShadow: '0 0 15px rgba(139, 92, 246, 0.6)' },
+          '0%, 100%': { boxShadow: '0 0 4px rgba(16, 185, 129, 0.2)' },
+          '50%': { boxShadow: '0 0 12px rgba(16, 185, 129, 0.4)' },
         },
       },
       animation: {
@@ -223,14 +226,18 @@ export default {
         "fadeInDown": 'fadeInDown 0.7s ease-out forwards',
         "shimmer": 'shimmer 2.2s linear infinite',
         
-        // Animações importantes para FlowGenie
+        // Animações refinadas
         "pulse-slow": 'pulse-slow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         "float": 'float 5s ease-in-out infinite',
         "scale-in": 'scale-in 0.5s cubic-bezier(0.17, 0.67, 0.83, 0.67) forwards',
         "fade-in-left": 'fade-in-left 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards',
         "fade-in-right": 'fade-in-right 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards',
-        "glow-pulse": 'glow-pulse 2s ease-in-out infinite',
+        "glow-pulse": 'glow-pulse 2.5s ease-in-out infinite',
       },
+      backgroundImage: {
+        'gradient-primary': 'linear-gradient(to right, #10b981, #059669)',
+        'gradient-card': 'linear-gradient(to bottom, rgba(15, 23, 42, 0.95), rgba(7, 11, 17, 0.98))',
+      }
     },
   },
   future: {
@@ -247,9 +254,30 @@ export default {
       addUtilities({
         '.bg-gradient-primary': {
           'background-image': 'linear-gradient(to right, var(--tw-gradient-stops))',
-          '--tw-gradient-from': '#8B5CF6',
-          '--tw-gradient-to': '#6366F1',
+          '--tw-gradient-from': '#10b981',
+          '--tw-gradient-to': '#059669',
           '--tw-gradient-stops': 'var(--tw-gradient-from), var(--tw-gradient-to)',
+        },
+        '.text-gradient': {
+          'background-clip': 'text',
+          '-webkit-background-clip': 'text',
+          '-webkit-text-fill-color': 'transparent',
+          'color': 'transparent',
+        },
+        '.bg-dark-card': {
+          'background-color': 'rgba(15, 23, 42, 0.6)',
+          'backdrop-filter': 'blur(12px)',
+          'border': '1px solid rgba(31, 41, 55, 0.4)',
+        },
+        '.backdrop-blur-card': {
+          'backdrop-filter': 'blur(12px)',
+        },
+        '.scrollbar-hide': {
+          '-ms-overflow-style': 'none',
+          'scrollbar-width': 'none',
+          '&::-webkit-scrollbar': {
+            'display': 'none',
+          },
         },
       });
     },

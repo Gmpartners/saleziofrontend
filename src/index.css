@@ -2,60 +2,322 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Fonte Inter para tipografia refinada */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+/* Importar animações de notificação */
+@import './assets/notification-animations.css';
+
+/* Estilos base */
 @layer base {
   :root {
-    --background: 0 10% 100%;
-    --foreground: 240 10% 3.9%;
-    --sidebar-bg: 0 0% 98%;
-    --sidebar-fg: 240 5.3% 26.1%;
-    --purple-primary: 267 100% 60%;
-    --purple-accent: 267 100% 70%;
-    --sidebar-border: 240 5.9% 90%;
-    --bg-primary: #2a155c;
-    --bg-secondary: #1A0B38;
-    --card-bg: rgba(30, 27, 75, 0.3);
-    
-  }
-  .light {
-    --bg-primary: #FFFFFF;
-    --bg-secondary: #F8F7FB;
-    --card-bg: rgba(241, 241, 244, 0.7);
-  }
-  
-
-  .dark {
-    /* Atualizando para usar os valores HSL do slate-900 */
-    --background: 222.2 44% 11.2%; /* slate-900 em HSL */
+    --background: 210 30% 3%;
     --foreground: 0 0% 98%;
-    --sidebar-bg: 240 5.9% 10%;
-    --sidebar-fg: 240 4.8% 95.9%;
-    --purple-primary: 267 100% 60%;
-    --purple-accent: 267 100% 70%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --background-start: #F8FAFC;
-  --background-mid: #EDE9FE;
-  --background-end: #F3E8FF;
-  --card-background: #FFFFFF;
-  }
+    --card: 210 25% 6%;
+    --card-foreground: 0 0% 98%;
+    --popover: 210 25% 6%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 142 75% 42%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 25% 8%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 210 25% 5%;
+    --muted-foreground: 215 5% 64.9%;
+    --accent: 142 75% 42%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 210 25% 12%;
+    --input: 210 25% 12%;
+    --ring: 142 75% 42%;
+    --radius: 0.4rem;
 
+    /* Cores específicas para sidebar */
+    --sidebar-background: 210 30% 4%;
+    --sidebar-foreground: 0 0% 98%;
+    --sidebar-primary: 142 75% 42%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 25% 10%;
+    --sidebar-accent-foreground: 0 0% 98%;
+    --sidebar-border: 210 25% 15%;
+    --sidebar-ring: 142 75% 45%;
+  }
+}
+
+/* Estilos personalizados */
+@layer components {
+  /* Botões */
+  .btn-primary {
+    @apply px-4 py-2 bg-[#10b981] text-white rounded-md shadow-md hover:bg-[#059669] transition-all duration-200 font-medium;
+  }
   
+  .btn-secondary {
+    @apply px-4 py-2 bg-[#101820] text-white border border-[#1f2937]/30 rounded-md shadow-md hover:bg-[#1a242e] transition-all duration-200;
+  }
+  
+  .btn-danger {
+    @apply px-4 py-2 bg-red-600 text-white rounded-md shadow-md hover:bg-red-700 transition-all duration-200;
+  }
+  
+  .btn-icon {
+    @apply p-2 rounded-md hover:bg-[#1a242e] text-slate-300 hover:text-white transition-all duration-200 border border-transparent hover:border-[#1f2937]/30;
+  }
+  
+  /* Inputs */
+  .input-primary {
+    @apply bg-[#0c1118] border border-[#1f2937]/50 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-[#10b981]/30 focus:border-[#10b981]/50 transition-all duration-200;
+  }
+  
+  /* Badges */
+  .badge {
+    @apply px-2 py-0.5 rounded-md text-xs font-medium shadow-sm;
+  }
+  
+  .badge-success {
+    @apply bg-[#10b981]/15 text-[#34d399] border border-[#10b981]/20;
+  }
+  
+  .badge-warning {
+    @apply bg-amber-500/15 text-amber-300 border border-amber-500/20;
+  }
+  
+  .badge-danger {
+    @apply bg-red-500/15 text-red-300 border border-red-500/20;
+  }
+  
+  .badge-info {
+    @apply bg-blue-500/15 text-blue-300 border border-blue-500/20;
+  }
+  
+  .badge-purple {
+    @apply bg-purple-500/15 text-purple-300 border border-purple-500/20;
+  }
+  
+  /* Cards */
+  .card {
+    @apply bg-[#0f1621] rounded-lg p-5 shadow-lg border border-[#1f2937]/40;
+  }
+  
+  /* Animações */
+  .animate-fadeIn {
+    animation: fadeIn 0.4s ease-out forwards;
+  }
+  
+  .animate-slideUp {
+    animation: slideUp 0.5s ease-out forwards;
+  }
+  
+  .animate-slideDown {
+    animation: slideDown 0.5s ease-out forwards;
+  }
+  
+  .animate-slideInLeft {
+    animation: slideInLeft 0.5s ease-out forwards;
+  }
+  
+  .animate-slideInRight {
+    animation: slideInRight 0.5s ease-out forwards;
+  }
+  
+  .animate-pulse-light {
+    animation: pulseLight 3s infinite;
+  }
+  
+  /* Mobile safeguards */
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0);
+  }
 
-  html {
-    font-family: 'Albert Sans', 'sans-serif';
+  /* Custom scrollbar - refinado para o tema sofisticado */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.3);
+    border-radius: 8px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(16, 185, 129, 0.25);
+    border-radius: 8px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(16, 185, 129, 0.4);
+  }
+
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(16, 185, 129, 0.25) rgba(15, 23, 42, 0.3);
+  }
+  
+  /* MultiFlow status classes */
+  .status-aguardando {
+    @apply bg-amber-500/15 text-amber-300 border border-amber-500/20;
+  }
+  
+  .status-em_andamento {
+    @apply bg-blue-500/15 text-blue-300 border border-blue-500/20;
+  }
+  
+  .status-finalizada {
+    @apply bg-[#10b981]/15 text-[#34d399] border border-[#10b981]/20;
+  }
+  
+  /* MultiFlow mensagens */
+  .mensagem-cliente {
+    @apply bg-[#0f1621] text-white border border-[#1f2937]/50 rounded-lg;
+  }
+  
+  .mensagem-atendente {
+    @apply bg-[#0d1f17] text-white border border-[#10b981]/20 rounded-lg;
+  }
+  
+  .mensagem-bot {
+    @apply bg-[#0c1118] text-slate-300 border border-[#1f2937]/50 rounded-lg;
+  }
+  
+  /* Elementos refinados */
+  .text-title {
+    @apply text-lg font-medium tracking-tight text-white;
+  }
+  
+  .text-subtitle {
+    @apply text-sm text-slate-400 tracking-wide;
+  }
+  
+  .highlight-number {
+    @apply text-2xl font-semibold text-[#10b981];
+  }
+  
+  .data-grid {
+    @apply w-full border-collapse;
+  }
+  
+  .data-grid th {
+    @apply text-xs font-semibold uppercase tracking-wider text-slate-400 px-4 py-2 text-left;
+  }
+  
+  .data-grid td {
+    @apply px-4 py-3 text-sm border-t border-[#1f2937]/20;
+  }
+  
+  .chip {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[#0d1f17] text-[#34d399] border border-[#10b981]/30;
+  }
+  
+  /* Notificações e alertas */
+  .notification-bell {
+    @apply relative;
+  }
+  
+  .notification-bell .indicator {
+    @apply absolute -top-1 -right-1 w-2 h-2 bg-[#10b981] rounded-full;
+  }
+  
+  .notification-badge {
+    @apply px-1.5 py-0.5 rounded-full text-xs font-medium bg-[#10b981] text-white;
+  }
+  
+  .message-unread {
+    @apply bg-[#0a2038] border-[#10b981]/30;
+  }
+  
+  .live-update-indicator {
+    @apply inline-flex items-center gap-1 text-xs text-[#10b981];
+  }
+  
+  .live-update-indicator::before {
+    content: "";
+    @apply w-2 h-2 bg-[#10b981] rounded-full animate-pulse;
   }
 }
 
-
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
+/* Custom scrollbar para toda a aplicação */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
 }
 
-@keyframes spin-slow {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.2);
+  border-radius: 8px;
 }
 
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(16, 185, 129, 0.2);
+  border-radius: 8px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(16, 185, 129, 0.3);
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(16, 185, 129, 0.2) rgba(15, 23, 42, 0.2);
+}
+
+/* Remover highlight azul em mobile ao tocar nos elementos */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Media queries para ajustar tamanhos de texto */
+@media (max-width: 640px) {
+  h1 {
+    font-size: 1.5rem !important;
+    letter-spacing: -0.01em !important;
+  }
+  
+  h2 {
+    font-size: 1.25rem !important;
+    letter-spacing: -0.01em !important;
+  }
+  
+  h3 {
+    font-size: 1.125rem !important;
+  }
+  
+  /* Ajuste de padding em containers */
+  .container {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+  
+  /* Ajuste de margens */
+  .px-4 {
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
+  }
+  
+  .py-4 {
+    padding-top: 0.75rem !important;
+    padding-bottom: 0.75rem !important;
+  }
+}
+
+/* Melhorias de tipografia */
+body {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  letter-spacing: -0.01em;
+  background-color: #070b11;
+  color: #f9fafb;
+}
+
+.tracking-tight {
+  letter-spacing: -0.01em;
+}
+
+.tracking-tighter {
+  letter-spacing: -0.02em;
+}
+
+/* Definição de animações refinadas */
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -64,7 +326,7 @@
 @keyframes fadeInUp {
   from { 
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(16px);
   }
   to { 
     opacity: 1;
@@ -72,16 +334,58 @@
   }
 }
 
-.animate-fadeIn {
-  animation: fadeIn 0.5s ease-out forwards;
+@keyframes slideUp {
+  from { 
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
+@keyframes slideDown {
+  from { 
+    opacity: 0;
+    transform: translateY(-16px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInLeft {
+  from { 
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInRight {
+  from { 
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulseLight {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.8; }
+}
+
+/* Animate classes - specific for MultiFlow */
 .animate-fadeInUp {
-  animation: fadeInUp 0.6s ease-out forwards;
-}
-
-.animate-spin-slow {
-  animation: spin-slow 3s linear infinite;
+  animation: fadeInUp 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
 
 .delay-100 {
@@ -108,47 +412,59 @@
   animation-delay: 600ms;
 }
 
-.delay-700 {
-  animation-delay: 700ms;
+/* Rotação lenta para animações de loading */
+.animate-spin-slow {
+  animation: spin 3s linear infinite;
 }
 
-/* Estilização da barra de rolagem */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-::-webkit-scrollbar-track {
-  background: rgba(30, 29, 43, 0.5);
+/* Ajustes de acessibilidade para foco */
+:focus {
+  outline: 2px solid rgba(16, 185, 129, 0.5);
+  outline-offset: 2px;
 }
 
-::-webkit-scrollbar-thumb {
-  background: rgba(37, 211, 102, 0.5);
-  border-radius: 9999px;
+[role="button"]:focus, 
+button:focus, 
+a:focus {
+  outline: 2px solid rgba(16, 185, 129, 0.5);
+  outline-offset: 2px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(37, 211, 102, 0.7);
+/* Suporte para modo de preferência de redução de movimento */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
-/* Hack para o Firefox */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(37, 211, 102, 0.5) rgba(30, 29, 43, 0.5);
+/* Melhorias de visualização em dispositivos de alta densidade de pixel */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  body {
+    text-rendering: optimizeLegibility;
+  }
 }
 
-/* Outras estilizações globais */
-body {
-  background-color: #0c0b14;
-  color: white;
-  font-family: 'Inter', sans-serif;
-  margin: 0;
-  padding: 0;
+/* Suporte para modo escuro do sistema */
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #070b11;
+    color: #f9fafb;
+  }
 }
-
-input::placeholder,
-textarea::placeholder {
-  color: rgba(156, 163, 175, 0.7);
-}
-
-

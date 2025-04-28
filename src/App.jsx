@@ -1,26 +1,31 @@
 // App.jsx
-import { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { ChevronsLeft, ChevronsRight, Menu } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { BrowserRouter as Router } from 'react-router-dom';
+import { ChevronsLeft, ChevronsRight, Menu, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
-// Import AuthContext e Provider (usando o contexto existente)
-import { AuthContextProvider } from "./contexts/AuthContext";
+// Import hooks and contexts
 import { useAuthContext } from "./hooks/useAuthContext";
 import { SocketProvider } from "./contexts/SocketContext";
 
 // Components
 import { AppSidebar } from './components/app-sidebar.jsx';
-import WhatsAppDashboard from './pages/Dashboard/WhatsAppDashboard.jsx';
-import ConversationsPage from './pages/Conversations/ConversationsPage.jsx';
-import ConversationDetail from './pages/Conversations/ConversationDetail.jsx';
-import AnalyticsPage from './pages/Analytics/AnalyticsPage.jsx';
+import MobileBottomNav from './components/mobile-bottom-nav.jsx';
 
-// Auth pages
-import Login from './pages/Login/Login';
-import Signup from './pages/Signup/Signup';
+// Routes
+import AppRoutes from './routes';
+
+// Componente principal
+const App = () => {
+  return (
+    <Router>
+      <AuthenticatedApp />
+    </Router>
+  );
+};
 
 // Componente que usa o hook useAuthContext
-const AuthenticatedRoutes = () => {
+const AuthenticatedApp = () => {
   const { user, authIsReady } = useAuthContext();
   const [collapsed, setCollapsed] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -58,119 +63,158 @@ const AuthenticatedRoutes = () => {
   }, []);
   
   // Função para alternar a sidebar no mobile
-  const toggleMobileSidebar = () => {
-    setSidebarVisible(!sidebarVisible);
-  };
+  const toggleMobileSidebar = useCallback(() => {
+    setSidebarVisible(prev => !prev);
+  }, []);
 
-  // Don't render anything until auth is ready
+  // Fechar sidebar ao clicar em links (apenas em mobile)
+  const closeSidebar = useCallback(() => {
+    if (isMobile) {
+      setSidebarVisible(false);
+    }
+  }, [isMobile]);
+
+  // Exibir tela de carregamento enquanto verifica autenticação
   if (!authIsReady) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-[#0c0b14]">
-        <div className="animate-spin w-8 h-8 border-4 border-t-transparent border-green-500 rounded-full"></div>
+      <div className="flex items-center justify-center min-h-screen bg-[#070b11]">
+        <div className="w-12 h-12 relative">
+          <div className="absolute inset-0 rounded-full border-4 border-t-[#10b981] border-r-[#10b981]/40 border-b-[#10b981]/20 border-l-[#10b981]/10 animate-spin"></div>
+          <div className="absolute inset-2 rounded-full border-4 border-t-transparent border-r-[#10b981] border-b-[#10b981]/30 border-l-transparent animate-spin animation-delay-300"></div>
+        </div>
       </div>
     );
   }
 
+  // Layout autenticado com sidebar
   if (user) {
     return (
       <SocketProvider>
-        <div className={`flex h-screen overflow-hidden bg-[#0c0b14] ${mounted ? 'opacity-100' : 'opacity-0'} transition-opacity duration-500`}>
+        <div 
+          className={`flex h-screen overflow-hidden bg-[#070b11] ${mounted ? 'opacity-100' : 'opacity-0'} transition-opacity duration-500`}
+          data-socket-context=""
+        >
           {/* Container da Sidebar */}
-          <div className={`sidebar-container h-full ${isMobile ? 'fixed z-50' : 'relative'} 
-            ${isMobile && !sidebarVisible ? 'translate-x-[-100%]' : 'translate-x-0'} 
-            transition-transform duration-300 ease-in-out`}>
-            <div 
-              className={`h-full transition-all duration-300 ease-in-out overflow-hidden ${
-                collapsed ? "w-[70px]" : "w-[240px]"
-              } relative`}
-            >
-              <AppSidebar collapsed={collapsed} setCollapsed={setCollapsed} />
-            </div>
-          </div>
+          <AnimatePresence>
+            {(sidebarVisible || !isMobile) && (
+              <motion.div 
+                initial={isMobile ? { x: -300 } : false}
+                animate={{ x: 0 }}
+                exit={isMobile ? { x: -300 } : false}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                className={`sidebar-container h-full ${isMobile ? 'fixed z-50' : 'relative'}`}
+              >
+                <div 
+                  className={`h-full transition-all duration-300 ease-in-out overflow-hidden 
+                    shadow-lg ${
+                    collapsed ? "w-[70px]" : "w-[260px]"
+                  } relative`}
+                >
+                  <AppSidebar collapsed={collapsed} setCollapsed={setCollapsed} closeSidebar={closeSidebar} />
+                  
+                  {/* Botão de fechar apenas para mobile */}
+                  {isMobile && sidebarVisible && (
+                    <button 
+                      onClick={toggleMobileSidebar}
+                      aria-label="Fechar menu"
+                      className="absolute top-4 right-3 bg-[#0f1621]/80 backdrop-blur-sm text-slate-400 rounded-full p-1.5 
+                              hover:text-white hover:bg-[#101820] transition-all duration-200 
+                              shadow-md hover:shadow-lg"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-          {/* Botão para colapsar/expandir a sidebar */}
+          {/* Botão para colapsar/expandir a sidebar (apenas desktop) */}
           {!isMobile && (
-            <div 
-              className="absolute top-28 left-0 z-[60] transform"
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.3 }}
+              className="absolute top-28 z-[60]"
               style={{
-                left: collapsed ? '59px' : '229px',
+                left: collapsed ? '59px' : '249px',
                 transition: 'left 0.3s ease-in-out'
               }}
             >
               <button
                 onClick={() => setCollapsed(!collapsed)}
-                className="flex items-center justify-center w-6 h-6 rounded-full bg-green-600 
-                          text-white shadow-lg border-2 border-[#0c0b14] 
-                          hover:bg-green-700 transition-colors"
+                aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
+                className="flex items-center justify-center w-7 h-7 rounded-full 
+                         bg-gradient-to-br from-[#10b981] to-[#059669]
+                         text-white shadow-md border border-[#10b981]/20
+                         hover:shadow-lg transition-all duration-200"
               >
                 {collapsed ? (
-                  <ChevronsRight className="h-3.5 w-3.5" />
+                  <ChevronsRight className="h-4 w-4" />
                 ) : (
-                  <ChevronsLeft className="h-3.5 w-3.5" />
+                  <ChevronsLeft className="h-4 w-4" />
                 )}
               </button>
-            </div>
+            </motion.div>
           )}
 
           {/* Overlay para fechar a sidebar no mobile */}
           {isMobile && sidebarVisible && (
-            <div 
-              className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40"
-              onClick={() => setSidebarVisible(false)}
-            ></div>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
+              onClick={toggleMobileSidebar}
+              aria-hidden="true"
+            ></motion.div>
           )}
 
           {/* Conteúdo Principal */}
-          <main 
-            className={`flex-1 overflow-auto transition-all duration-300 ease-in-out ${
-              mounted ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
-            }`}
-            style={{
-              animationDelay: '200ms',
-              backgroundColor: '#0c0b14',
-            }}
+          <motion.main 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1, duration: 0.3 }}
+            className={`flex-1 overflow-auto relative ${isMobile ? 'pb-16' : ''}`}
           >
             {/* Botão do menu para mobile */}
             {isMobile && (
-              <button
+              <motion.button
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.2 }}
                 onClick={toggleMobileSidebar}
-                className="fixed top-4 left-4 z-30 bg-green-600 text-white rounded-lg p-2 shadow-lg"
+                aria-label="Abrir menu"
+                className="fixed top-4 left-4 z-30 p-2 rounded-lg
+                           bg-[#10b981]
+                           text-white shadow-md hover:bg-[#059669] 
+                           transition-all duration-200"
               >
                 <Menu className="h-5 w-5" />
-              </button>
+              </motion.button>
             )}
             
-            <Routes>
-              <Route path="/" element={<WhatsAppDashboard />} />
-              <Route path="/conversations" element={<ConversationsPage />} />
-              <Route path="/conversations/:id" element={<ConversationDetail />} />
-              <Route path="/analytics" element={<AnalyticsPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </main>
+            {/* Rotas da aplicação */}
+            <div className="p-4 md:p-6 h-full">
+              <AppRoutes />
+            </div>
+            
+            {/* Bottom Navigation para Mobile */}
+            <MobileBottomNav />
+          </motion.main>
         </div>
       </SocketProvider>
     );
-  } else {
+  } 
+  
+  // Layout não autenticado (sem sidebar)
+  else {
     return (
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/signup" element={<Signup />} />
-        {/* Redirect to login if trying to access protected routes */}
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+      <div className="min-h-screen bg-[#070b11]">
+        <AppRoutes />
+      </div>
     );
   }
 };
-
-function App() {
-  return (
-    <AuthContextProvider>
-      <Router>
-        <AuthenticatedRoutes />
-      </Router>
-    </AuthContextProvider>
-  );
-}
 
 export default App;

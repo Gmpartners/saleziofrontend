@@ -12,13 +12,19 @@ class MultiflowApiService {
         'Content-Type': 'application/json',
         [AUTH_HEADER]: API_TOKEN
       },
-      timeout: 15000 // Aumentado para 15 segundos para permitir mais tempo para a API responder
+      timeout: 15000 // 15 segundos
     });
     
     // Cache para armazenar respostas
     this.cache = {};
+    this.cacheDuration = 5 * 60 * 1000; // 5 minutos em milissegundos
     this.setoresCache = null;
-    this.allConversasCache = []; // Cache global para todas as conversas
+    this.allConversasCache = []; // Cache global para todas as conversas ativas
+    this.completedConversasCache = []; // Cache para conversas concluídas
+    this.lastConversasFetch = 0; // Timestamp da última busca de conversas
+    this.lastCompletedConversasFetch = 0; // Timestamp da última busca de conversas concluídas
+    this.isFetchingConversas = false; // Flag para evitar requisições duplicadas
+    this.isFetchingCompletedConversas = false; // Flag para evitar requisições duplicadas
   }
 
   /**
@@ -37,7 +43,7 @@ class MultiflowApiService {
       
       // Verificar cache
       const cacheKey = `setores-${userId}`;
-      if (this.cache[cacheKey] && Date.now() - this.cache[cacheKey].timestamp < 60000) {
+      if (this.cache[cacheKey] && Date.now() - this.cache[cacheKey].timestamp < this.cacheDuration) {
         console.log('Usando cache de setores');
         return this.cache[cacheKey].data;
       }
@@ -78,7 +84,7 @@ class MultiflowApiService {
       
       // Verificar cache
       const cacheKey = `setor-${userId}-${setorId}`;
-      if (this.cache[cacheKey] && Date.now() - this.cache[cacheKey].timestamp < 60000) {
+      if (this.cache[cacheKey] && Date.now() - this.cache[cacheKey].timestamp < this.cacheDuration) {
         console.log('Usando cache de setor');
         return this.cache[cacheKey].data;
       }
@@ -203,6 +209,39 @@ class MultiflowApiService {
    * Obtém lista de conversas com filtros opcionais
    */
   async getConversas(filters = {}, userId = this.getUserId()) {
+    // Verificar se são conversas finalizadas
+    const isCompletedRequest = filters.status && 
+        (Array.isArray(filters.status) ? 
+            filters.status.includes('finalizada') : 
+            filters.status === 'finalizada');
+    
+    // Se for uma requisição de conversas finalizadas, usar método específico
+    if (isCompletedRequest) {
+      return this.getCompletedConversas(filters, userId);
+    }
+    
+    // Verificar se já existe uma requisição em andamento
+    if (this.isFetchingConversas) {
+      console.log('Já existe uma requisição de conversas em andamento, usando cache existente');
+      return {
+        success: true,
+        data: this.allConversasCache
+      };
+    }
+    
+    // Verificar se o cache está recente (menos de 1 minuto)
+    const now = Date.now();
+    const cacheAge = now - this.lastConversasFetch;
+    if (this.allConversasCache.length > 0 && cacheAge < 60000) {
+      console.log(`Usando cache de conversas (${this.allConversasCache.length} conversas, idade: ${cacheAge}ms)`);
+      return {
+        success: true,
+        data: this.allConversasCache
+      };
+    }
+    
+    this.isFetchingConversas = true;
+    
     try {
       console.log(`Buscando conversas para o usuário: ${userId}`, filters);
       
@@ -226,46 +265,46 @@ class MultiflowApiService {
       }
       
       params.page = filters.page || 1;
-      params.limit = filters.limit || 50; // Aumentado para 50 para mostrar mais conversas
+      params.limit = filters.limit || 50; // 50 para mostrar mais conversas
       
-      // Não usar cache para obter sempre dados atualizados      
       const response = await this.api.get(API_ENDPOINTS.getConversas(userId), { params });
+      this.lastConversasFetch = now;
       
-      // Se não encontrar conversas com o filtro especificado, mas tiver cache global, usar ele
-      if (response.data.success && (!response.data.data || response.data.data.length === 0)) {
-        if (this.allConversasCache.length > 0) {
-          console.log(`Usando cache global de conversas (${this.allConversasCache.length} conversas)`);
-          
-          // Se tiver filtros específicos, aplicá-los ao cache
-          if (filters.setorId) {
-            const filteredCache = this.allConversasCache.filter(conv => {
-              const convSetorId = conv.setorId?._id || conv.setorId;
-              return convSetorId === filters.setorId;
-            });
-            
-            response.data.data = filteredCache;
-          } else {
-            response.data.data = this.allConversasCache;
-          }
-        }
-      } else if (response.data.success && Array.isArray(response.data.data) && response.data.data.length > 0) {
-        // Atualizar o cache global com dados novos, se não estiver filtrando por setor
+      // Se a requisição for bem-sucedida e tiver dados, atualizar o cache
+      if (response.data.success && Array.isArray(response.data.data)) {
+        // Se não estiver filtrando por setor, usar como cache global
         if (!filters.setorId) {
-          this.allConversasCache = response.data.data;
+          this.allConversasCache = response.data.data.map(conv => ({
+            ...conv,
+            unreadCount: 0,
+            lastMessageRead: true
+          }));
         } else {
           // Se estiver filtrando por setor, adicionar ao cache global apenas se não existirem
           response.data.data.forEach(conv => {
             const existingIndex = this.allConversasCache.findIndex(c => c._id === conv._id);
             if (existingIndex >= 0) {
-              this.allConversasCache[existingIndex] = conv;
+              this.allConversasCache[existingIndex] = {
+                ...conv,
+                unreadCount: this.allConversasCache[existingIndex].unreadCount || 0,
+                lastMessageRead: this.allConversasCache[existingIndex].lastMessageRead !== undefined ? 
+                  this.allConversasCache[existingIndex].lastMessageRead : true
+              };
             } else {
-              this.allConversasCache.push(conv);
+              this.allConversasCache.push({
+                ...conv,
+                unreadCount: 0,
+                lastMessageRead: true
+              });
             }
           });
         }
+        
+        console.log(`Conversas obtidas com sucesso: ${response.data.data.length} conversas`);
+      } else {
+        console.warn('Resposta vazia ou inválida da API de conversas');
       }
       
-      console.log(`Conversas obtidas com sucesso: ${response.data.data?.length || 0} conversas`);
       return response.data;
     } catch (error) {
       console.error('Erro ao buscar conversas:', error.message);
@@ -285,6 +324,95 @@ class MultiflowApiService {
         error: error.message,
         data: []
       };
+    } finally {
+      // Atraso para evitar novas requisições imediatamente
+      setTimeout(() => {
+        this.isFetchingConversas = false;
+      }, 1000);
+    }
+  }
+
+  /**
+   * Obtém lista de conversas concluídas
+   */
+  async getCompletedConversas(filters = {}, userId = this.getUserId()) {
+    // Verificar se já existe uma requisição em andamento
+    if (this.isFetchingCompletedConversas) {
+      console.log('Já existe uma requisição de conversas concluídas em andamento, usando cache existente');
+      return {
+        success: true,
+        data: this.completedConversasCache
+      };
+    }
+    
+    // Verificar se o cache está recente (menos de 5 minutos para conversas concluídas)
+    const now = Date.now();
+    const cacheAge = now - this.lastCompletedConversasFetch;
+    if (this.completedConversasCache.length > 0 && cacheAge < 300000) {
+      console.log(`Usando cache de conversas concluídas (${this.completedConversasCache.length} conversas, idade: ${cacheAge}ms)`);
+      return {
+        success: true,
+        data: this.completedConversasCache
+      };
+    }
+    
+    this.isFetchingCompletedConversas = true;
+    
+    try {
+      console.log(`Buscando conversas concluídas para o usuário: ${userId}`, filters);
+      
+      // Garantir que estamos buscando apenas conversas finalizadas
+      const params = {
+        status: 'finalizada',
+        page: filters.page || 1,
+        limit: filters.limit || 50,
+      };
+      
+      if (filters.setorId) {
+        params.setorId = filters.setorId;
+      }
+      
+      if (filters.arquivada !== undefined) {
+        params.arquivada = filters.arquivada;
+      } else {
+        params.arquivada = false; // Por padrão, buscar apenas não arquivadas
+      }
+      
+      const response = await this.api.get(API_ENDPOINTS.getConversas(userId), { params });
+      this.lastCompletedConversasFetch = now;
+      
+      // Se a requisição for bem-sucedida e tiver dados, atualizar o cache
+      if (response.data.success && Array.isArray(response.data.data)) {
+        this.completedConversasCache = response.data.data;
+        console.log(`Conversas concluídas obtidas com sucesso: ${response.data.data.length} conversas`);
+      } else {
+        console.warn('Resposta vazia ou inválida da API de conversas concluídas');
+      }
+      
+      return response.data;
+    } catch (error) {
+      console.error('Erro ao buscar conversas concluídas:', error.message);
+      
+      // Se tiver cache e ocorrer erro, retornar o cache como fallback
+      if (this.completedConversasCache.length > 0) {
+        console.log(`Usando cache como fallback (${this.completedConversasCache.length} conversas concluídas)`);
+        return {
+          success: true,
+          error: error.message,
+          data: this.completedConversasCache
+        };
+      }
+      
+      return {
+        success: false,
+        error: error.message,
+        data: []
+      };
+    } finally {
+      // Atraso para evitar novas requisições imediatamente
+      setTimeout(() => {
+        this.isFetchingCompletedConversas = false;
+      }, 1000);
     }
   }
 
@@ -295,18 +423,65 @@ class MultiflowApiService {
     try {
       console.log(`Buscando detalhes da conversa ${conversaId} para o usuário: ${userId}`);
       
-      // Não usar cache para detalhes da conversa, para garantir dados atualizados
+      // Verificar se a conversa está no cache primeiro
+      const cachedConversation = this.allConversasCache.find(conv => conv._id === conversaId) || 
+                                 this.completedConversasCache.find(conv => conv._id === conversaId);
+      
+      // Se tiver mensagens no cache, usá-lo diretamente
+      if (cachedConversation && cachedConversation.mensagens && cachedConversation.mensagens.length > 0) {
+        console.log(`Usando detalhes em cache para conversa ${conversaId}`);
+        return {
+          success: true,
+          data: cachedConversation
+        };
+      }
+      
+      // Buscar detalhes atualizados
       const response = await this.api.get(API_ENDPOINTS.getConversa(userId, conversaId));
+      
+      // Se for bem-sucedido, atualizar a conversa no cache apropriado
+      if (response.data.success && response.data.data) {
+        const isFinalized = response.data.data.status && 
+                           response.data.data.status.toLowerCase() === 'finalizada';
+        
+        if (isFinalized) {
+          // Atualizar no cache de conversas concluídas
+          const conversationIndex = this.completedConversasCache.findIndex(conv => conv._id === conversaId);
+          if (conversationIndex >= 0) {
+            this.completedConversasCache[conversationIndex] = response.data.data;
+          } else {
+            this.completedConversasCache.push(response.data.data);
+          }
+        } else {
+          // Atualizar no cache global de conversas ativas
+          const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
+          if (conversationIndex >= 0) {
+            this.allConversasCache[conversationIndex] = {
+              ...response.data.data,
+              unreadCount: 0, // Zerar contagem ao visualizar detalhes
+              lastMessageRead: true
+            };
+          } else {
+            this.allConversasCache.push({
+              ...response.data.data,
+              unreadCount: 0,
+              lastMessageRead: true
+            });
+          }
+        }
+      }
       
       console.log(`Detalhes da conversa obtidos com sucesso: ${conversaId}`);
       return response.data;
     } catch (error) {
       console.error(`Erro ao buscar detalhes da conversa ${conversaId}:`, error.message);
       
-      // Tentar encontrar a conversa no cache global
-      const cachedConversation = this.allConversasCache.find(conv => conv._id === conversaId);
+      // Tentar encontrar a conversa no cache
+      const cachedConversation = this.allConversasCache.find(conv => conv._id === conversaId) || 
+                                this.completedConversasCache.find(conv => conv._id === conversaId);
+      
       if (cachedConversation) {
-        console.log(`Usando conversa do cache global como fallback para ${conversaId}`);
+        console.log(`Usando conversa do cache como fallback para ${conversaId}`);
         return {
           success: true,
           error: error.message,
@@ -334,19 +509,13 @@ class MultiflowApiService {
         { conteudo }
       );
       
-      // Invalidar cache relacionado a esta conversa
-      const cacheKeysToInvalidate = Object.keys(this.cache).filter(key => 
-        key.includes(`conversa-${userId}-${conversaId}`) || key.includes(`conversas-${userId}`)
-      );
-      
-      cacheKeysToInvalidate.forEach(key => delete this.cache[key]);
-      
       // Atualizar a conversa no cache global
       const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
       if (conversationIndex >= 0 && response.data.success && response.data.data) {
         this.allConversasCache[conversationIndex] = {
           ...this.allConversasCache[conversationIndex],
-          ...response.data.data
+          ...response.data.data,
+          lastMessageRead: true
         };
       }
       
@@ -374,17 +543,24 @@ class MultiflowApiService {
         { status }
       );
       
-      // Invalidar cache relacionado a esta conversa
-      const cacheKeysToInvalidate = Object.keys(this.cache).filter(key => 
-        key.includes(`conversa-${userId}-${conversaId}`) || key.includes(`conversas-${userId}`)
-      );
-      
-      cacheKeysToInvalidate.forEach(key => delete this.cache[key]);
-      
-      // Atualizar a conversa no cache global
-      const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
-      if (conversationIndex >= 0) {
-        this.allConversasCache[conversationIndex].status = status;
+      // Se estiver finalizando a conversa, mover para o cache de conversas concluídas
+      if (status.toLowerCase() === 'finalizada') {
+        const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
+        if (conversationIndex >= 0) {
+          const conversation = this.allConversasCache[conversationIndex];
+          this.completedConversasCache.push({
+            ...conversation,
+            status: 'finalizada'
+          });
+          // Remover da lista de conversas ativas
+          this.allConversasCache.splice(conversationIndex, 1);
+        }
+      } else {
+        // Atualizar a conversa no cache global
+        const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
+        if (conversationIndex >= 0) {
+          this.allConversasCache[conversationIndex].status = status;
+        }
       }
       
       console.log(`Status da conversa atualizado com sucesso: ${status}`);
@@ -410,15 +586,18 @@ class MultiflowApiService {
         API_ENDPOINTS.finalizarConversa(userId, conversaId)
       );
       
-      // Invalidar cache relacionado a esta conversa
-      const cacheKeysToInvalidate = Object.keys(this.cache).filter(key => 
-        key.includes(`conversa-${userId}-${conversaId}`) || key.includes(`conversas-${userId}`)
-      );
-      
-      cacheKeysToInvalidate.forEach(key => delete this.cache[key]);
-      
-      // Remover a conversa do cache global
-      this.allConversasCache = this.allConversasCache.filter(conv => conv._id !== conversaId);
+      // Mover a conversa do cache global para o cache de concluídas
+      const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
+      if (conversationIndex >= 0) {
+        const conversation = this.allConversasCache[conversationIndex];
+        // Adicionar ao cache de concluídas
+        this.completedConversasCache.push({
+          ...conversation,
+          status: 'finalizada'
+        });
+        // Remover da lista de conversas ativas
+        this.allConversasCache.splice(conversationIndex, 1);
+      }
       
       console.log(`Conversa finalizada com sucesso: ${conversaId}`);
       return response.data;
@@ -443,15 +622,9 @@ class MultiflowApiService {
         API_ENDPOINTS.arquivarConversa(userId, conversaId)
       );
       
-      // Invalidar cache relacionado a esta conversa
-      const cacheKeysToInvalidate = Object.keys(this.cache).filter(key => 
-        key.includes(`conversa-${userId}-${conversaId}`) || key.includes(`conversas-${userId}`)
-      );
-      
-      cacheKeysToInvalidate.forEach(key => delete this.cache[key]);
-      
-      // Remover a conversa do cache global
+      // Remover a conversa dos caches
       this.allConversasCache = this.allConversasCache.filter(conv => conv._id !== conversaId);
+      this.completedConversasCache = this.completedConversasCache.filter(conv => conv._id !== conversaId);
       
       console.log(`Conversa arquivada com sucesso: ${conversaId}`);
       return response.data;
@@ -476,13 +649,6 @@ class MultiflowApiService {
         API_ENDPOINTS.transferirConversa(userId, conversaId),
         { setorId }
       );
-      
-      // Invalidar cache relacionado a esta conversa
-      const cacheKeysToInvalidate = Object.keys(this.cache).filter(key => 
-        key.includes(`conversa-${userId}-${conversaId}`) || key.includes(`conversas-${userId}`)
-      );
-      
-      cacheKeysToInvalidate.forEach(key => delete this.cache[key]);
       
       // Atualizar a conversa no cache global
       const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
@@ -512,6 +678,10 @@ class MultiflowApiService {
     console.log('Limpando todo o cache da API');
     this.cache = {};
     this.setoresCache = null;
+    this.allConversasCache = [];
+    this.completedConversasCache = [];
+    this.lastConversasFetch = 0;
+    this.lastCompletedConversasFetch = 0;
   }
 
   /**
