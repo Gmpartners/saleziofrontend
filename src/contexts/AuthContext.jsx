@@ -3,6 +3,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "../firebase/config";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { multiflowApi } from "../services/multiflowApi";
+import { shouldHaveFullAccess, processSetoresResponseForAdmin } from "./AdminSetorAccess";
 
 // Criando o contexto
 export const AuthContext = createContext();
@@ -109,6 +110,11 @@ export function AuthContextProvider({ children }) {
         localStorage.setItem('userDisplayName', userData.displayName || userData.name || 'Usuário');
         localStorage.setItem('userRole', userData.role || 'agent');
         
+        // Salvar token da API para uso consistente
+        if (import.meta.env.VITE_API_TOKEN) {
+          localStorage.setItem('apiToken', import.meta.env.VITE_API_TOKEN);
+        }
+        
         // Dados do setor (se existirem)
         if (userData.setor) {
           localStorage.setItem('userSectorId', userData.setor.id || '');
@@ -128,18 +134,47 @@ export function AuthContextProvider({ children }) {
       actions.setSyncStatus({ status: 'syncing', message: 'Buscando setores...' });
       
       const response = await multiflowApi.getSetores(userId);
+      const userProfile = state.userProfile;
       
-      if (response.success && Array.isArray(response.data)) {
-        console.log(`${response.data.length} setores encontrados`);
-        actions.setUserSectors(response.data);
+      // Processar a resposta para usuários admin
+      const processedResponse = processSetoresResponseForAdmin(response, userProfile);
+      
+      if (processedResponse.success && Array.isArray(processedResponse.data)) {
+        console.log(`${processedResponse.data.length} setores encontrados`);
+        actions.setUserSectors(processedResponse.data);
         actions.setSyncStatus({ 
           status: 'success', 
-          message: `${response.data.length} setores encontrados`,
+          message: `${processedResponse.data.length} setores encontrados`,
           timestamp: new Date().toISOString()
         });
-        return response.data;
+        return processedResponse.data;
       } else {
         console.log('Nenhum setor encontrado');
+        
+        // Se for um usuário admin, criar um setor virtual mesmo que a resposta falhe
+        if (userProfile && shouldHaveFullAccess(userProfile)) {
+          const adminSectors = [
+            {
+              _id: 'admin-all-sectors',
+              id: 'admin-all-sectors',
+              nome: 'Todos os Setores',
+              descricao: 'Acesso administrativo a todos os setores',
+              responsavel: 'Administrador',
+              ativo: true
+            }
+          ];
+          
+          console.log('Criando setor virtual para administrador');
+          actions.setUserSectors(adminSectors);
+          actions.setSyncStatus({ 
+            status: 'success', 
+            message: 'Acesso administrativo configurado',
+            timestamp: new Date().toISOString()
+          });
+          
+          return adminSectors;
+        }
+        
         actions.setUserSectors([]);
         actions.setSyncStatus({ 
           status: 'warning', 
@@ -150,6 +185,30 @@ export function AuthContextProvider({ children }) {
       }
     } catch (error) {
       console.error('Erro ao buscar setores:', error);
+      
+      // Se for um usuário admin, criar um setor virtual mesmo que ocorra erro
+      if (state.userProfile && shouldHaveFullAccess(state.userProfile)) {
+        const adminSectors = [
+          {
+            _id: 'admin-all-sectors',
+            id: 'admin-all-sectors',
+            nome: 'Todos os Setores',
+            descricao: 'Acesso administrativo a todos os setores',
+            responsavel: 'Administrador',
+            ativo: true
+          }
+        ];
+        
+        console.log('Criando setor virtual para administrador após erro');
+        actions.setUserSectors(adminSectors);
+        actions.setSyncStatus({ 
+          status: 'success', 
+          message: 'Acesso administrativo configurado',
+          timestamp: new Date().toISOString()
+        });
+        
+        return adminSectors;
+      }
       
       actions.setSyncStatus({ 
         status: 'error', 
@@ -163,7 +222,22 @@ export function AuthContextProvider({ children }) {
 
   // Sincroniza dados do setor do usuário com a API
   const syncUserSector = async (userProfile) => {
-    if (!userProfile || !userProfile.setor) return null;
+    if (!userProfile) return null;
+    
+    // Se for admin, não precisamos sincronizar
+    if (shouldHaveFullAccess(userProfile)) {
+      console.log('Usuário administrador com acesso total, pulando sincronização de setor');
+      return {
+        _id: 'admin-all-sectors',
+        id: 'admin-all-sectors',
+        nome: 'Todos os Setores',
+        descricao: 'Acesso administrativo a todos os setores',
+        responsavel: 'Administrador',
+        ativo: true
+      };
+    }
+    
+    if (!userProfile.setor) return null;
     
     try {
       const userId = userProfile.id;
@@ -236,6 +310,22 @@ export function AuthContextProvider({ children }) {
 
   // Função para atualizar setor do usuário
   const updateUserSector = async (userId, setorData) => {
+    // Se for admin, não permitir alteração de setor
+    if (state.userProfile && shouldHaveFullAccess(state.userProfile)) {
+      console.log('Usuário administrador não precisa alterar setor');
+      return {
+        success: true,
+        setor: {
+          _id: 'admin-all-sectors',
+          id: 'admin-all-sectors',
+          nome: 'Todos os Setores',
+          descricao: 'Acesso administrativo a todos os setores',
+          responsavel: 'Administrador',
+          ativo: true
+        }
+      };
+    }
+    
     try {
       if (!userId || !setorData || !setorData.nome) {
         throw new Error("ID do usuário e dados do setor são obrigatórios");
@@ -338,6 +428,32 @@ export function AuthContextProvider({ children }) {
       }
       
       const userData = userDoc.data();
+      
+      // Verificar se o usuário é admin
+      if (userData.role === 'admin' || userId === 'jaGLB04wZ3TgZisjIm4xN6hoIjI2') {
+        console.log('Usuário admin detectado, configurando acesso privilegiado');
+        
+        // Para admins, apenas limpar status de sincronização
+        await updateDoc(userRef, {
+          syncStatus: "success",
+          syncError: null,
+          lastSyncAttempt: new Date()
+        });
+        
+        // Atualizar perfil local
+        await fetchUserProfile(auth.currentUser);
+        
+        actions.setSyncStatus({ 
+          status: 'success', 
+          message: 'Sincronização reparada com sucesso para usuário admin',
+          timestamp: new Date().toISOString()
+        });
+        
+        return {
+          success: true,
+          message: "Sincronização reparada com sucesso para usuário admin"
+        };
+      }
       
       // Verificar se o usuário tem um setor
       if (!userData.setor) {
@@ -451,8 +567,27 @@ export function AuthContextProvider({ children }) {
           console.warn('Erro ao buscar setores disponíveis:', err);
         });
         
-        // Verificar erros de sincronização
-        if (userData.syncStatus === 'error' && userData.syncError) {
+        // Para usuários admin, ignorar erros de sincronização
+        if (shouldHaveFullAccess(userProfile)) {
+          console.log('Usuário administrador detectado, ignorando problemas de sincronização');
+          
+          // Atualizar status de sincronização no Firestore
+          if (userData.syncStatus === 'error') {
+            await updateDoc(userRef, {
+              syncStatus: "success",
+              syncError: null,
+              lastSyncAttempt: new Date()
+            });
+          }
+          
+          actions.setSyncStatus({ 
+            status: 'success', 
+            message: 'Acesso administrativo configurado',
+            timestamp: new Date().toISOString()
+          });
+        }
+        // Verificar erros de sincronização para usuários normais
+        else if (userData.syncStatus === 'error' && userData.syncError) {
           console.warn(`Usuário com erro de sincronização: ${userData.syncError}`);
           actions.setSyncStatus({ 
             status: 'error', 
@@ -520,6 +655,11 @@ export function AuthContextProvider({ children }) {
         // Obter token do Firebase
         const token = await user.getIdToken(true);
         localStorage.setItem('authToken', token);
+        
+        // Garantir que o token da API também esteja no localStorage
+        if (import.meta.env.VITE_API_TOKEN) {
+          localStorage.setItem('apiToken', import.meta.env.VITE_API_TOKEN);
+        }
       } else {
         // Limpar dados locais quando deslogado
         localStorage.removeItem('userId');
@@ -530,6 +670,7 @@ export function AuthContextProvider({ children }) {
         localStorage.removeItem('userSectorId');
         localStorage.removeItem('userSectorName');
         localStorage.removeItem('authToken');
+        localStorage.removeItem('apiToken');
       }
     });
 
@@ -547,6 +688,11 @@ export function AuthContextProvider({ children }) {
           // Renovar token JWT
           const token = await auth.currentUser.getIdToken(true);
           localStorage.setItem('authToken', token);
+          
+          // Garantir que o token da API também esteja no localStorage
+          if (import.meta.env.VITE_API_TOKEN) {
+            localStorage.setItem('apiToken', import.meta.env.VITE_API_TOKEN);
+          }
         }
       } catch (error) {
         console.error('Erro ao renovar token:', error);

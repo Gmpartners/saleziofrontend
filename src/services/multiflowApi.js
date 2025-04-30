@@ -2,17 +2,31 @@ import axios from 'axios';
 import { API_URL, API_TOKEN, AUTH_HEADER, API_ENDPOINTS } from '../config/syncConfig';
 
 /**
- * Serviço para comunicação com a API MultiFlow
+ * Serviço otimizado para comunicação com a API MultiFlow
  */
 class MultiflowApiService {
   constructor() {
+    // Inicialização básica do axios
     this.api = axios.create({
       baseURL: API_URL,
       headers: {
-        'Content-Type': 'application/json',
-        [AUTH_HEADER]: API_TOKEN
+        'Content-Type': 'application/json'
       },
       timeout: 15000 // 15 segundos
+    });
+    
+    // Adicionar interceptor para garantir que o token esteja sempre presente
+    this.api.interceptors.request.use((config) => {
+      // Tentar obter o token do localStorage primeiro (mais atualizado)
+      const token = localStorage.getItem('apiToken') || API_TOKEN;
+      
+      if (token) {
+        config.headers[AUTH_HEADER] = token;
+      } else {
+        console.warn('Token de API não encontrado!');
+      }
+      
+      return config;
     });
     
     // Cache para armazenar respostas
@@ -21,10 +35,12 @@ class MultiflowApiService {
     this.setoresCache = null;
     this.allConversasCache = []; // Cache global para todas as conversas ativas
     this.completedConversasCache = []; // Cache para conversas concluídas
+    this.conversationCache = new Map(); // Cache por ID de conversa
     this.lastConversasFetch = 0; // Timestamp da última busca de conversas
     this.lastCompletedConversasFetch = 0; // Timestamp da última busca de conversas concluídas
     this.isFetchingConversas = false; // Flag para evitar requisições duplicadas
     this.isFetchingCompletedConversas = false; // Flag para evitar requisições duplicadas
+    this.pendingFetches = new Map(); // Controlar requisições em andamento por conversationId
   }
 
   /**
@@ -417,82 +433,218 @@ class MultiflowApiService {
   }
 
   /**
-   * Obtém uma conversa específica pelo ID
+   * Obtém uma conversa específica pelo ID com controle de cache e prevenção de requisições duplicadas
    */
-  async getConversa(conversaId, userId = this.getUserId()) {
+  async getConversa(conversaId, userId = this.getUserId(), forceRefresh = false) {
     try {
       console.log(`Buscando detalhes da conversa ${conversaId} para o usuário: ${userId}`);
       
-      // Verificar se a conversa está no cache primeiro
-      const cachedConversation = this.allConversasCache.find(conv => conv._id === conversaId) || 
-                                 this.completedConversasCache.find(conv => conv._id === conversaId);
-      
-      // Se tiver mensagens no cache, usá-lo diretamente
-      if (cachedConversation && cachedConversation.mensagens && cachedConversation.mensagens.length > 0) {
-        console.log(`Usando detalhes em cache para conversa ${conversaId}`);
-        return {
-          success: true,
-          data: cachedConversation
-        };
-      }
-      
-      // Buscar detalhes atualizados
-      const response = await this.api.get(API_ENDPOINTS.getConversa(userId, conversaId));
-      
-      // Se for bem-sucedido, atualizar a conversa no cache apropriado
-      if (response.data.success && response.data.data) {
-        const isFinalized = response.data.data.status && 
-                           response.data.data.status.toLowerCase() === 'finalizada';
-        
-        if (isFinalized) {
-          // Atualizar no cache de conversas concluídas
-          const conversationIndex = this.completedConversasCache.findIndex(conv => conv._id === conversaId);
-          if (conversationIndex >= 0) {
-            this.completedConversasCache[conversationIndex] = response.data.data;
-          } else {
-            this.completedConversasCache.push(response.data.data);
-          }
-        } else {
-          // Atualizar no cache global de conversas ativas
-          const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
-          if (conversationIndex >= 0) {
-            this.allConversasCache[conversationIndex] = {
-              ...response.data.data,
-              unreadCount: 0, // Zerar contagem ao visualizar detalhes
-              lastMessageRead: true
-            };
-          } else {
-            this.allConversasCache.push({
-              ...response.data.data,
-              unreadCount: 0,
-              lastMessageRead: true
-            });
-          }
+      // Verificar se já existe uma requisição em andamento para essa conversa
+      if (this.pendingFetches.has(conversaId)) {
+        console.log(`Já existe uma requisição em andamento para conversa ${conversaId}, aguardando...`);
+        try {
+          // Aguardar a requisição em andamento
+          return await this.pendingFetches.get(conversaId);
+        } catch (error) {
+          // Se a requisição em andamento falhar, continuar com uma nova
+          console.warn(`Requisição anterior para conversa ${conversaId} falhou, tentando novamente`);
         }
       }
       
-      console.log(`Detalhes da conversa obtidos com sucesso: ${conversaId}`);
-      return response.data;
-    } catch (error) {
-      console.error(`Erro ao buscar detalhes da conversa ${conversaId}:`, error.message);
+      // Verificar cache
+      const cachedConversation = this.conversationCache.get(conversaId);
+      const now = Date.now();
       
-      // Tentar encontrar a conversa no cache
-      const cachedConversation = this.allConversasCache.find(conv => conv._id === conversaId) || 
-                                this.completedConversasCache.find(conv => conv._id === conversaId);
-      
-      if (cachedConversation) {
-        console.log(`Usando conversa do cache como fallback para ${conversaId}`);
+      // Se tiver cache recente (menos de 10 segundos) e não forçar atualização, usar cache
+      if (cachedConversation && 
+          now - cachedConversation.timestamp < 10000 && 
+          !forceRefresh) {
+        console.log(`Usando cache recente para conversa ${conversaId}`);
         return {
           success: true,
-          error: error.message,
-          data: cachedConversation
+          data: cachedConversation.data
         };
       }
       
+      // Criar uma promessa para esta requisição
+      const fetchPromise = new Promise(async (resolve, reject) => {
+        try {
+          // Buscar detalhes atualizados
+          const response = await this.api.get(API_ENDPOINTS.getConversa(userId, conversaId));
+          
+          // Se for bem-sucedido, atualizar todos os caches
+          if (response.data.success && response.data.data) {
+            const data = response.data.data;
+            
+            // Atualizar cache específico da conversa
+            this.conversationCache.set(conversaId, {
+              data,
+              timestamp: now
+            });
+            
+            const isFinalized = data.status && data.status.toLowerCase() === 'finalizada';
+            
+            if (isFinalized) {
+              // Atualizar no cache de conversas concluídas
+              const conversationIndex = this.completedConversasCache.findIndex(conv => conv._id === conversaId);
+              if (conversationIndex >= 0) {
+                this.completedConversasCache[conversationIndex] = data;
+              } else {
+                this.completedConversasCache.push(data);
+              }
+            } else {
+              // Atualizar no cache global de conversas ativas
+              const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
+              if (conversationIndex >= 0) {
+                this.allConversasCache[conversationIndex] = {
+                  ...data,
+                  unreadCount: 0, // Zerar contagem ao visualizar detalhes
+                  lastMessageRead: true
+                };
+              } else {
+                this.allConversasCache.push({
+                  ...data,
+                  unreadCount: 0,
+                  lastMessageRead: true
+                });
+              }
+            }
+          }
+          
+          console.log(`Detalhes da conversa obtidos com sucesso: ${conversaId}`);
+          resolve(response.data);
+        } catch (error) {
+          console.error(`Erro ao buscar detalhes da conversa ${conversaId}:`, error.message);
+          
+          // Tentar encontrar a conversa em algum cache
+          const cachedConversation = this.conversationCache.get(conversaId) || 
+                                    this.allConversasCache.find(conv => conv._id === conversaId) || 
+                                    this.completedConversasCache.find(conv => conv._id === conversaId);
+          
+          if (cachedConversation) {
+            console.log(`Usando conversa do cache como fallback para ${conversaId}`);
+            resolve({
+              success: true,
+              error: error.message,
+              data: cachedConversation.data || cachedConversation
+            });
+          } else {
+            reject(error);
+          }
+        } finally {
+          // Remover esta requisição das pendentes
+          this.pendingFetches.delete(conversaId);
+        }
+      });
+      
+      // Registrar esta promessa como em andamento
+      this.pendingFetches.set(conversaId, fetchPromise);
+      
+      return await fetchPromise;
+    } catch (error) {
+      console.error(`Erro ao buscar detalhes da conversa ${conversaId}:`, error.message);
+      
+      // Retornar erro
       return {
         success: false,
         error: error.message,
         data: null
+      };
+    }
+  }
+
+  /**
+   * Marca todas as mensagens de uma conversa como lidas
+   */
+  async markConversationAsRead(conversaId, userId = this.getUserId()) {
+    try {
+      console.log(`Marcando todas as mensagens da conversa ${conversaId} como lidas`);
+      
+      // Verificar se o endpoint está disponível
+      if (!API_ENDPOINTS.markRead) {
+        console.warn('Endpoint para marcar mensagens como lidas não configurado');
+        // Tentar implementação alternativa - apenas atualizar o cache
+        const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
+        if (conversationIndex >= 0) {
+          this.allConversasCache[conversationIndex].unreadCount = 0;
+          this.allConversasCache[conversationIndex].lastMessageRead = true;
+        }
+        
+        // Atualizar também o cache específico
+        if (this.conversationCache.has(conversaId)) {
+          const cachedData = this.conversationCache.get(conversaId);
+          cachedData.data.unreadCount = 0;
+          cachedData.data.lastMessageRead = true;
+          this.conversationCache.set(conversaId, {
+            ...cachedData,
+            timestamp: Date.now() // Atualizar timestamp
+          });
+        }
+        
+        return { success: true };
+      }
+      
+      const response = await this.api.post(API_ENDPOINTS.markRead(userId, conversaId));
+      
+      // Atualizar todos os caches
+      const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
+      if (conversationIndex >= 0) {
+        this.allConversasCache[conversationIndex].unreadCount = 0;
+        this.allConversasCache[conversationIndex].lastMessageRead = true;
+      }
+      
+      if (this.conversationCache.has(conversaId)) {
+        const cachedData = this.conversationCache.get(conversaId);
+        cachedData.data.unreadCount = 0;
+        cachedData.data.lastMessageRead = true;
+        this.conversationCache.set(conversaId, {
+          ...cachedData,
+          timestamp: Date.now() // Atualizar timestamp
+        });
+      }
+      
+      console.log('Mensagens marcadas como lidas com sucesso');
+      return response.data;
+    } catch (error) {
+      console.error(`Erro ao marcar mensagens como lidas na conversa ${conversaId}:`, error.message);
+      
+      // Mesmo com erro, atualizar o cache local para melhorar UX
+      const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
+      if (conversationIndex >= 0) {
+        this.allConversasCache[conversationIndex].unreadCount = 0;
+        this.allConversasCache[conversationIndex].lastMessageRead = true;
+      }
+      
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Marca uma mensagem específica como lida
+   */
+  async markMessageAsRead(conversaId, messageId, userId = this.getUserId()) {
+    try {
+      console.log(`Marcando mensagem ${messageId} da conversa ${conversaId} como lida`);
+      
+      // Verificar se o endpoint está disponível
+      if (!API_ENDPOINTS.markMessageRead) {
+        console.warn('Endpoint para marcar mensagem como lida não configurado');
+        return { success: true };
+      }
+      
+      const response = await this.api.post(API_ENDPOINTS.markMessageRead(userId, conversaId, messageId));
+      
+      console.log('Mensagem marcada como lida com sucesso');
+      return response.data;
+    } catch (error) {
+      console.error(`Erro ao marcar mensagem ${messageId} como lida:`, error.message);
+      
+      return {
+        success: false,
+        error: error.message
       };
     }
   }
@@ -509,7 +661,7 @@ class MultiflowApiService {
         { conteudo }
       );
       
-      // Atualizar a conversa no cache global
+      // Atualizar todos os caches
       const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
       if (conversationIndex >= 0 && response.data.success && response.data.data) {
         this.allConversasCache[conversationIndex] = {
@@ -517,6 +669,37 @@ class MultiflowApiService {
           ...response.data.data,
           lastMessageRead: true
         };
+      }
+      
+      // Atualizar cache específico se existir
+      if (this.conversationCache.has(conversaId) && response.data.success && response.data.data) {
+        const cachedData = this.conversationCache.get(conversaId);
+        // Verificar se temos a mensagem recém-adicionada
+        if (response.data.data.mensagens && cachedData.data.mensagens) {
+          // Manter todas as mensagens do cache e adicionar/atualizar as novas
+          const existingMessageIds = new Set(cachedData.data.mensagens.map(msg => msg._id));
+          const newMessages = response.data.data.mensagens.filter(msg => !existingMessageIds.has(msg._id));
+          
+          this.conversationCache.set(conversaId, {
+            data: {
+              ...cachedData.data,
+              ...response.data.data,
+              mensagens: [...cachedData.data.mensagens, ...newMessages],
+              lastMessageRead: true
+            },
+            timestamp: Date.now()
+          });
+        } else {
+          // Se não temos mensagens no cache ou na resposta, apenas atualizar o que temos
+          this.conversationCache.set(conversaId, {
+            data: {
+              ...cachedData.data,
+              ...response.data.data,
+              lastMessageRead: true
+            },
+            timestamp: Date.now()
+          });
+        }
       }
       
       console.log('Mensagem enviada com sucesso');
@@ -563,6 +746,16 @@ class MultiflowApiService {
         }
       }
       
+      // Atualizar cache específico se existir
+      if (this.conversationCache.has(conversaId)) {
+        const cachedData = this.conversationCache.get(conversaId);
+        cachedData.data.status = status;
+        this.conversationCache.set(conversaId, {
+          ...cachedData,
+          timestamp: Date.now() // Atualizar timestamp
+        });
+      }
+      
       console.log(`Status da conversa atualizado com sucesso: ${status}`);
       return response.data;
     } catch (error) {
@@ -599,6 +792,16 @@ class MultiflowApiService {
         this.allConversasCache.splice(conversationIndex, 1);
       }
       
+      // Atualizar cache específico se existir
+      if (this.conversationCache.has(conversaId)) {
+        const cachedData = this.conversationCache.get(conversaId);
+        cachedData.data.status = 'finalizada';
+        this.conversationCache.set(conversaId, {
+          ...cachedData,
+          timestamp: Date.now() // Atualizar timestamp
+        });
+      }
+      
       console.log(`Conversa finalizada com sucesso: ${conversaId}`);
       return response.data;
     } catch (error) {
@@ -625,6 +828,7 @@ class MultiflowApiService {
       // Remover a conversa dos caches
       this.allConversasCache = this.allConversasCache.filter(conv => conv._id !== conversaId);
       this.completedConversasCache = this.completedConversasCache.filter(conv => conv._id !== conversaId);
+      this.conversationCache.delete(conversaId);
       
       console.log(`Conversa arquivada com sucesso: ${conversaId}`);
       return response.data;
@@ -650,13 +854,23 @@ class MultiflowApiService {
         { setorId }
       );
       
-      // Atualizar a conversa no cache global
+      // Atualizar todos os caches
       const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
       if (conversationIndex >= 0 && response.data.success && response.data.data) {
         this.allConversasCache[conversationIndex] = {
           ...this.allConversasCache[conversationIndex],
           setorId: setorId
         };
+      }
+      
+      // Atualizar cache específico se existir
+      if (this.conversationCache.has(conversaId)) {
+        const cachedData = this.conversationCache.get(conversaId);
+        cachedData.data.setorId = setorId;
+        this.conversationCache.set(conversaId, {
+          ...cachedData,
+          timestamp: Date.now() // Atualizar timestamp
+        });
       }
       
       console.log('Conversa transferida com sucesso');
@@ -680,6 +894,7 @@ class MultiflowApiService {
     this.setoresCache = null;
     this.allConversasCache = [];
     this.completedConversasCache = [];
+    this.conversationCache.clear();
     this.lastConversasFetch = 0;
     this.lastCompletedConversasFetch = 0;
   }
