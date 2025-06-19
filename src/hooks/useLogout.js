@@ -10,43 +10,55 @@ export const useLogout = () => {
   const [isPending, setIsPending] = useState(false);
   const { dispatch, user } = useAuthContext();
 
+  const clearAllAuthData = () => {
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('userId');
+    localStorage.removeItem('userName');
+    localStorage.removeItem('userDisplayName');
+    localStorage.removeItem('userEmail');
+    localStorage.removeItem('userRole');
+    localStorage.removeItem('userSectorId');
+    localStorage.removeItem('userSectorName');
+    localStorage.removeItem('apiToken');
+    sessionStorage.clear();
+  };
+
   const logout = async () => {
     setError(null);
     setIsPending(true);
 
     try {
-      // Se temos um usuário, tente atualizar o status online
       if (user) {
         try {
           const { uid } = user;
           const userRef = doc(db, "users", uid);
           await updateDoc(userRef, { online: false });
         } catch (updateError) {
-          // Se falhar ao atualizar o documento (por questões de permissão), 
-          // apenas registre o erro mas continue com o logout
           console.log("Não foi possível atualizar o status online:", updateError.message);
-          // Não defina setError aqui, pois queremos continuar com o logout
         }
       }
 
-      // Sempre tente fazer logout, mesmo se a atualização do doc falhar
       await signOut(auth);
-
-      // Dispatch logout action
+      
+      clearAllAuthData();
+      
       dispatch({ type: "LOGOUT" });
 
-      // Update state
       if (!isCancelled) {
         setIsPending(false);
         setError(null);
       }
     } catch (err) {
-      // Este é um erro real do processo de logout
+      console.log("Erro durante o logout:", err.message);
+      
+      clearAllAuthData();
+      
       if (!isCancelled) {
-        console.log("Erro durante o logout:", err.message);
         setError(err.message);
         setIsPending(false);
       }
+      
+      dispatch({ type: "LOGOUT" });
     }
   };
 

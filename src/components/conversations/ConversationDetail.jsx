@@ -1,550 +1,683 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
-  Send, 
-  MoreVertical, 
-  ArrowLeftCircle, 
-  UserCircle, 
-  Archive, 
-  Share, 
-  CheckCircle, 
-  MessageSquare, 
-  RefreshCw,
-  Paperclip,
-  Smile,
-  Phone,
-  Video
-} from 'lucide-react';
-
+import { useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft, UserCircle, MoreVertical, CheckCircle, Archive, Loader2, Phone, Video, X, Share } from 'lucide-react';
 import { useSocket } from '../../contexts/SocketContext';
-import MessageBubble from './MessageBubble';
+import MessageStatus from './MessageStatus';
 import TypingIndicator from './TypingIndicator';
 import { notificationService } from '../../services/notificationService';
+import { Button } from "@/components/ui/button";
+import { 
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator
+} from "@/components/ui/dropdown-menu";
+import { useConversation } from '../../hooks/useConversation';
+import MessageBubble from './MessageBubble';
+import MessageInput from './MessageInput';
+import { Avatar, AvatarFallback } from '../../components/ui/avatar';
+import { Badge } from '../../components/ui/badge';
+import { Skeleton } from '../../components/ui/skeleton';
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogDescription, 
+  DialogFooter 
+} from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
+import { useAuthContext } from '../../hooks/useAuthContext';
 
-// Componente de cabeçalho modernizado
-const ConversationHeader = ({ 
+const STATUS = {
+  AGUARDANDO: 'aguardando',
+  EM_ANDAMENTO: 'em_andamento',
+  FINALIZADA: 'finalizada',
+  ARQUIVADA: 'arquivada'
+};
+
+const ConversationHeader = React.memo(({ 
   conversation, 
-  onBack, 
-  onAction, 
-  onRefresh, 
-  isRefreshing, 
-  connectionStatus 
+  onBack,
+  isConnected, 
+  onShowActionMenu,
+  isConversationFinished
 }) => {
-  const [showOptions, setShowOptions] = useState(false);
+  if (!conversation) return null;
   
-  const nomeCliente = conversation?.nomeCliente || 'Cliente';
-  const telefoneCliente = conversation?.telefoneCliente || '';
-  const status = conversation?.status || '';
+  const { nomeCliente, telefoneCliente } = conversation;
+  const setorNome = conversation.setorId?.nome || conversation.setorInfo?.nome;
   
-  // Obter status formatado
-  const getStatusBadge = () => {
-    const statusLower = status.toLowerCase();
-    
-    if (statusLower.includes('aguardando')) {
-      return (
-        <span className="text-amber-400 text-xs font-medium bg-amber-400/10 px-2 py-0.5 rounded-full">
-          Aguardando
-        </span>
-      );
-    } else if (statusLower.includes('andamento')) {
-      return (
-        <span className="text-green-400 text-xs font-medium bg-green-400/10 px-2 py-0.5 rounded-full">
-          Em atendimento
-        </span>
-      );
-    } else if (statusLower.includes('finalizada')) {
-      return (
-        <span className="text-blue-400 text-xs font-medium bg-blue-400/10 px-2 py-0.5 rounded-full">
-          Finalizada
-        </span>
-      );
-    }
-    
-    return null;
-  };
-  
+  const initials = nomeCliente
+    ? nomeCliente
+        .split(' ')
+        .slice(0, 2)
+        .map(name => name && name[0])
+        .filter(Boolean)
+        .join('')
+        .toUpperCase()
+    : 'C';
+
   return (
-    <div className="flex flex-col border-b border-gray-700 bg-gradient-to-r from-gray-800 to-gray-900 rounded-t-lg shadow-md">
-      <div className="flex justify-between items-center p-3">
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={onBack}
-            className="h-8 w-8 flex items-center justify-center rounded-full hover:bg-gray-700/50 text-gray-400 transition-colors lg:hidden"
-            aria-label="Voltar"
-          >
-            <ArrowLeftCircle className="h-5 w-5" />
-          </button>
-          
-          <div className="w-10 h-10 rounded-full flex items-center justify-center overflow-hidden text-white bg-gradient-to-br from-[#10b981] to-[#0d8e6a]">
-            <UserCircle className="h-6 w-6" />
-          </div>
-          
-          <div>
-            <h3 className="text-white font-medium">{nomeCliente}</h3>
-            <div className="text-xs flex items-center space-x-2">
-              <span className="text-gray-400">{telefoneCliente}</span>
-              {getStatusBadge()}
-            </div>
-          </div>
-        </div>
+    <div className="flex items-center justify-between gap-3 p-4 lg:p-6 pt-4 bg-[#070b11] sticky top-0 z-30 border-b border-[#1f2937]/40">
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onBack}
+          className="flex items-center justify-center h-8 w-8 rounded-full bg-[#0f1621] text-slate-400 hover:text-white md:hidden"
+          aria-label="Voltar"
+        >
+          <ArrowLeft className="h-5 w-5" />
+        </button>
         
-        <div className="flex items-center gap-2">
-          {/* Indicador de conexão */}
-          {connectionStatus === 'connected' ? (
-            <span className="flex items-center text-xs text-green-400">
-              <span className="w-2 h-2 rounded-full bg-green-400 mr-1"></span>
-              Conectado
-            </span>
-          ) : connectionStatus === 'connecting' ? (
-            <span className="flex items-center text-xs text-amber-400">
-              <span className="w-2 h-2 rounded-full bg-amber-400 mr-1 animate-pulse"></span>
-              Conectando...
-            </span>
-          ) : (
-            <span className="flex items-center text-xs text-red-400">
-              <span className="w-2 h-2 rounded-full bg-red-400 mr-1"></span>
-              Desconectado
-            </span>
-          )}
-          
-          {/* Ações */}
-          <button 
-            onClick={() => onAction('videoCall')}
-            className="h-8 w-8 flex items-center justify-center rounded-full hover:bg-gray-700/50 text-gray-400 transition-colors"
-            title="Chamada de vídeo"
-          >
-            <Video className="h-4 w-4" />
-          </button>
-          
-          <button 
-            onClick={() => onAction('voiceCall')}
-            className="h-8 w-8 flex items-center justify-center rounded-full hover:bg-gray-700/50 text-gray-400 transition-colors"
-            title="Chamada de voz"
-          >
-            <Phone className="h-4 w-4" />
-          </button>
-          
-          <button 
-            onClick={onRefresh}
-            disabled={isRefreshing}
-            className={`h-8 w-8 flex items-center justify-center rounded-full hover:bg-gray-700/50 text-gray-400 transition-colors ${isRefreshing ? 'animate-spin opacity-50' : ''}`}
-            title="Atualizar conversa"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </button>
-          
-          <div className="relative">
-            <button 
-              onClick={() => setShowOptions(!showOptions)}
-              className="h-8 w-8 flex items-center justify-center rounded-full hover:bg-gray-700/50 text-gray-400 transition-colors"
-              aria-label="Mais opções"
+        <Avatar className="h-10 w-10 border-2 border-[#10b981]/30">
+          <AvatarFallback className="bg-gradient-to-br from-[#10b981] to-[#059669] text-white">
+            {initials}
+          </AvatarFallback>
+        </Avatar>
+        
+        <div>
+          <h3 className="text-white font-medium">{nomeCliente || 'Cliente'}</h3>
+          <div className="text-xs flex items-center space-x-2">
+            <span className="text-slate-400">{telefoneCliente || 'Sem telefone'}</span>
+            <Badge 
+              variant="outline" 
+              className={
+                conversation.status === STATUS.EM_ANDAMENTO
+                  ? "bg-[#10b981]/10 text-[#10b981] border-[#10b981]/20"
+                  : conversation.status === STATUS.AGUARDANDO
+                    ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
+                    : "bg-blue-500/10 text-blue-400 border-blue-500/20"
+              }
             >
-              <MoreVertical className="h-5 w-5" />
-            </button>
+              {conversation.status === STATUS.EM_ANDAMENTO 
+                ? 'Em atendimento' 
+                : conversation.status === STATUS.AGUARDANDO
+                  ? 'Aguardando'
+                  : 'Finalizada'
+              }
+            </Badge>
             
-            {showOptions && (
-              <div className="absolute right-0 top-full mt-1 z-10 w-56 bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
-                <div className="p-2">
-                  <button 
-                    onClick={() => { setShowOptions(false); onAction('finalizar'); }}
-                    className="w-full text-left px-3 py-2 hover:bg-gray-700 text-gray-300 rounded text-sm flex items-center gap-2"
-                  >
-                    <CheckCircle className="h-4 w-4 text-[#10b981]" />
-                    <span>Finalizar Conversa</span>
-                  </button>
-                  
-                  <button 
-                    onClick={() => { setShowOptions(false); onAction('transferir'); }}
-                    className="w-full text-left px-3 py-2 hover:bg-gray-700 text-gray-300 rounded text-sm flex items-center gap-2"
-                  >
-                    <Share className="h-4 w-4 text-blue-400" />
-                    <span>Transferir</span>
-                  </button>
-                  
-                  <button 
-                    onClick={() => { setShowOptions(false); onAction('arquivar'); }}
-                    className="w-full text-left px-3 py-2 hover:bg-gray-700 text-gray-300 rounded text-sm flex items-center gap-2"
-                  >
-                    <Archive className="h-4 w-4 text-amber-400" />
-                    <span>Arquivar</span>
-                  </button>
-                </div>
-              </div>
+            {setorNome && (
+              <Badge variant="outline" className="bg-[#101820] text-white border-[#1f2937]/50 hidden sm:inline-flex">
+                {setorNome}
+              </Badge>
             )}
           </div>
         </div>
       </div>
-    </div>
-  );
-};
-
-// Componente de entrada de mensagem modernizado
-const MessageInput = React.memo(({ 
-  onSubmit, 
-  disabled, 
-  onTyping 
-}) => {
-  const [newMessage, setNewMessage] = useState('');
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const inputRef = useRef(null);
-  const typingTimeoutRef = useRef(null);
-  
-  // Focar no input ao montar o componente
-  useEffect(() => {
-    if (inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, []);
-  
-  // Limpar timeout ao desmontar
-  useEffect(() => {
-    return () => {
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-    };
-  }, []);
-  
-  // Detectar digitação
-  const handleInputChange = (e) => {
-    const text = e.target.value;
-    setNewMessage(text);
-    
-    // Notificar digitação
-    if (onTyping && text) {
-      onTyping();
-    }
-  };
-  
-  // Ajustar altura do textarea dinamicamente
-  const adjustTextareaHeight = () => {
-    if (inputRef.current) {
-      inputRef.current.style.height = 'auto';
-      inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
-    }
-  };
-  
-  // Processar tecla Enter (enviar mensagem)
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit(e);
-    }
-    
-    // Ajustar altura em tempo real
-    setTimeout(adjustTextareaHeight, 0);
-  };
-  
-  // Enviar mensagem
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!newMessage.trim() || disabled) return;
-    
-    onSubmit(newMessage);
-    setNewMessage('');
-    setShowEmojiPicker(false);
-    
-    // Resetar altura do textarea
-    if (inputRef.current) {
-      inputRef.current.style.height = 'auto';
-    }
-    
-    // Focar no input novamente após enviar
-    setTimeout(() => {
-      if (inputRef.current) {
-        inputRef.current.focus();
-      }
-    }, 0);
-  };
-  
-  // Lista de emojis básicos
-  const basicEmojis = ['😀', '😊', '😂', '👍', '❤️', '🙏', '👋', '⭐', '✅', '🔥', '🤔', '😢'];
-  
-  return (
-    <form onSubmit={handleSubmit} className="flex gap-2 p-3 bg-gray-900 border-t border-gray-800">
-      {/* Botão de anexo */}
-      <button
-        type="button"
-        className="p-2 text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded-full transition-colors"
-        disabled={disabled}
-      >
-        <Paperclip className="h-5 w-5" />
-      </button>
       
-      {/* Área de texto */}
-      <div className="flex-1 relative">
-        <textarea
-          ref={inputRef}
-          value={newMessage}
-          onChange={handleInputChange}
-          onKeyDown={handleKeyDown}
-          placeholder="Digite sua mensagem..."
-          rows="1"
-          className="w-full bg-gray-800 border border-gray-700 text-white rounded-md px-4 py-2.5 pr-10 focus:outline-none focus:ring-2 focus:ring-[#10b981]/30 resize-none overflow-hidden"
-          disabled={disabled}
-          style={{ maxHeight: '120px' }}
-        />
-        
-        {/* Botão de emoji */}
-        <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
-          <button
-            type="button"
-            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-            className="text-gray-400 hover:text-gray-200 p-1 rounded-full hover:bg-gray-700/50"
-            disabled={disabled}
-          >
-            <Smile className="h-5 w-5" />
-          </button>
-          
-          {/* Seletor de emoji */}
-          {showEmojiPicker && (
-            <div className="absolute bottom-full right-0 mb-2 bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-2 z-10">
-              <div className="grid grid-cols-6 gap-1">
-                {basicEmojis.map(emoji => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    onClick={() => {
-                      setNewMessage(prev => prev + emoji);
-                      inputRef.current?.focus();
-                    }}
-                    className="w-8 h-8 hover:bg-gray-700 rounded text-lg flex items-center justify-center"
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 text-xs text-[#10b981]">
+          <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-[#10b981]' : 'bg-red-500'}`}></span>
+          <span className="hidden sm:inline">{isConnected ? 'Conectado' : 'Desconectado'}</span>
         </div>
+        
+        <Button 
+          size="icon"
+          variant="ghost"
+          className="rounded-full h-8 w-8 text-slate-400 hover:text-[#10b981] hover:bg-[#101820]"
+          title="Chamada de vídeo"
+          disabled={isConversationFinished}
+        >
+          <Video className="h-4 w-4" />
+        </Button>
+        
+        <Button 
+          size="icon"
+          variant="ghost"
+          className="rounded-full h-8 w-8 text-slate-400 hover:text-[#10b981] hover:bg-[#101820]"
+          title="Chamada de voz"
+          disabled={isConversationFinished}
+        >
+          <Phone className="h-4 w-4" />
+        </Button>
+        
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button 
+              size="icon"
+              variant="ghost"
+              className="rounded-full h-8 w-8 text-slate-400 hover:text-white hover:bg-[#101820]"
+              aria-label="Mais opções"
+            >
+              <MoreVertical className="h-5 w-5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56 bg-[#070b11] border border-[#1f2937]/40 shadow-md z-40">
+            <DropdownMenuItem 
+              className="flex items-center cursor-pointer text-white hover:bg-[#101820] focus:bg-[#101820]"
+              onClick={() => onShowActionMenu('finalizar')}
+              disabled={isConversationFinished}
+            >
+              <CheckCircle className="h-4 w-4 text-[#10b981] mr-2" />
+              <span>Finalizar Conversa</span>
+            </DropdownMenuItem>
+            
+            <DropdownMenuItem 
+              className="flex items-center cursor-pointer text-white hover:bg-[#101820] focus:bg-[#101820]"
+              onClick={() => onShowActionMenu('transferir')}
+              disabled={isConversationFinished}
+            >
+              <Share className="h-4 w-4 text-blue-400 mr-2" />
+              <span>Transferir</span>
+            </DropdownMenuItem>
+            
+            <DropdownMenuSeparator className="bg-[#1f2937]/40" />
+            
+            <DropdownMenuItem 
+              className="flex items-center cursor-pointer text-red-400 hover:bg-[#101820] focus:bg-[#101820]"
+              onClick={() => onShowActionMenu('arquivar')}
+            >
+              <Archive className="h-4 w-4 mr-2" />
+              <span>Arquivar</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-      
-      {/* Botão de envio */}
-      <button
-        type="submit"
-        disabled={disabled || !newMessage.trim()}
-        className="p-2.5 rounded-full bg-[#10b981] text-white hover:bg-[#0d8e6a] disabled:opacity-50 disabled:bg-[#10b981]/50 disabled:cursor-not-allowed transition-colors"
-      >
-        <Send className="h-5 w-5" />
-      </button>
-    </form>
+    </div>
   );
 });
 
-// Componente principal de conversa
-const ConversationDetail = ({ 
-  conversationId, 
-  onBack, 
-  isMobileView = false 
+const MessageList = React.memo(({ 
+  messages = [], 
+  isTyping, 
+  onRetryMessage,
+  messagesEndRef
 }) => {
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  
-  const messagesEndRef = useRef(null);
-  const messageListRef = useRef(null);
-  
+  if (messages.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 rounded-full bg-[#101820] flex items-center justify-center mb-4">
+            <UserCircle className="h-8 w-8 text-slate-400" />
+          </div>
+          <h3 className="text-lg text-white font-medium mb-2">Nenhuma mensagem</h3>
+          <p className="text-slate-400 max-w-md px-4">
+            Envie a primeira mensagem para iniciar a conversa.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 space-y-2 p-4">
+      {messages.map((message, index) => (
+        <MessageBubble 
+          key={message._id || `msg-${index}`} 
+          message={message} 
+          prevMessage={index > 0 ? messages[index - 1] : null}
+          isGrouped={
+            index > 0 && 
+            messages[index - 1].remetente === message.remetente &&
+            new Date(message.timestamp) - new Date(messages[index - 1].timestamp) < 60000
+          }
+          isLastInGroup={
+            index < messages.length - 1 ? 
+            messages[index + 1].remetente !== message.remetente : true
+          }
+          onRetry={onRetryMessage}
+        />
+      ))}
+      
+      {isTyping && <TypingIndicator user="Digitando..." />}
+      
+      <div ref={messagesEndRef} />
+    </div>
+  );
+});
+
+const LoadingSkeleton = () => (
+  <div className="h-full flex flex-col p-4 gap-4">
+    <div className="flex items-center gap-3">
+      <Skeleton className="h-8 w-8 rounded-full" />
+      <Skeleton className="h-6 w-40" />
+    </div>
+    
+    <div className="flex-1 p-4 space-y-4">
+      <div className="flex justify-start">
+        <Skeleton className="h-12 w-3/4 rounded-lg" />
+      </div>
+      <div className="flex justify-end">
+        <Skeleton className="h-12 w-3/4 rounded-lg" />
+      </div>
+      <div className="flex justify-start">
+        <Skeleton className="h-12 w-2/4 rounded-lg" />
+      </div>
+    </div>
+    
+    <div className="p-3 border-t border-[#1f2937]/40">
+      <div className="flex gap-2">
+        <Skeleton className="h-10 flex-1 rounded-md" />
+        <Skeleton className="h-10 w-10 rounded-md" />
+      </div>
+    </div>
+  </div>
+);
+
+const ConversationDetail = () => {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const { sectors } = useAuthContext();
   const { 
     selectedConversation, 
     selectConversation, 
-    sendMessage, 
-    finishConversation, 
-    transferConversation,
-    forceRefreshCurrentConversation,
-    typingUsers,
-    sendTypingIndicator,
+    sendMessage,
+    retryFailedMessage,
     isConnected,
-    archiveConversation
-  } = useSocket();
+    sendTypingIndicator,
+    transferConversation,
+    finishConversation,
+    archiveConversation,
+    refreshConversations,
+    refreshCompletedConversations,
+    loading: conversationLoading
+  } = useConversation(id);
   
-  // Quando o ID da conversa muda, selecionar a conversa no Socket
-  useEffect(() => {
-    if (conversationId) {
-      selectConversation(conversationId);
-    }
-  }, [conversationId, selectConversation]);
+  const [isTyping, setIsTyping] = useState(false);
+  const [typingTimeout, setTypingTimeout] = useState(null);
+  const [isActionLoading, setIsActionLoading] = useState(false);
+  const [actionType, setActionType] = useState(null);
+  
+  const messagesEndRef = useRef(null);
+  const messageListRef = useRef(null);
+  const isUpdatePendingRef = useRef(false);
+  
+  // Substituindo os diálogos modais por componentes de Dialog
+  const [showTransferDialog, setShowTransferDialog] = useState(false);
+  const [showFinishDialog, setShowFinishDialog] = useState(false);
+  const [showArchiveDialog, setShowArchiveDialog] = useState(false);
+  const [selectedSector, setSelectedSector] = useState(null);
 
-  // Rolar para o fim das mensagens quando elas mudam
   useEffect(() => {
-    if (selectedConversation?.mensagens?.length) {
-      scrollToBottom();
+    if (id) {
+      selectConversation(id);
     }
-  }, [selectedConversation?.mensagens?.length]);
+    
+    return () => {
+      if (typingTimeout) {
+        clearTimeout(typingTimeout);
+      }
+    };
+  }, [id, selectConversation, typingTimeout]);
 
-  // Função para rolar para o fim das mensagens
-  const scrollToBottom = () => {
-    if (messagesEndRef.current) {
+  const scrollToBottom = useCallback(() => {
+    if (messagesEndRef.current && messageListRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
+  }, []);
+
+  useEffect(() => {
+    if (selectedConversation?.mensagens?.length > 0) {
+      setTimeout(() => {
+        scrollToBottom();
+      }, 100);
+    }
+  }, [selectedConversation?.mensagens, scrollToBottom]);
+
+  const handleBack = () => {
+    navigate('/conversations', { replace: true });
   };
 
-  // Forçar atualização de conversa
-  const handleRefresh = useCallback(() => {
-    if (!forceRefreshCurrentConversation || isRefreshing) return;
-    
-    setIsRefreshing(true);
-    
-    forceRefreshCurrentConversation()
-      .then(() => {
-        notificationService.showToast('Conversa atualizada', 'success');
-      })
-      .catch(err => {
-        console.error('Erro ao atualizar conversa:', err);
-        notificationService.showToast('Erro ao atualizar conversa', 'error');
-      })
-      .finally(() => {
-        setIsRefreshing(false);
-      });
-  }, [forceRefreshCurrentConversation, isRefreshing]);
-
-  // Enviar mensagem
   const handleSendMessage = async (text) => {
-    if (!text.trim() || isSubmitting || !selectedConversation) return;
+    if (!text || !id) {
+      notificationService.showToast('Não foi possível enviar a mensagem: Texto vazio ou conversa inválida', 'error');
+      return false;
+    }
     
-    setIsSubmitting(true);
+    if (!isConnected) {
+      notificationService.showToast('Você está desconectado. Verifique sua conexão.', 'error');
+      return false;
+    }
+    
+    setIsActionLoading(true);
+    setActionType('message');
     
     try {
-      // Atualizar scroll após enviar
-      await sendMessage(selectedConversation._id, text.trim());
+      await sendMessage(id, text);
       setTimeout(scrollToBottom, 100);
+      return true;
     } catch (error) {
-      console.error('Erro ao enviar mensagem:', error);
-      notificationService.showToast('Erro ao enviar mensagem', 'error');
+      console.error("Erro ao enviar mensagem:", error);
+      notificationService.showToast(`Erro ao enviar mensagem: ${error.message || 'Falha na comunicação'}`, 'error');
+      return false;
     } finally {
-      setIsSubmitting(false);
+      setIsActionLoading(false);
+      setActionType(null);
     }
   };
 
-  // Manipular ações do menu
-  const handleAction = useCallback((action) => {
-    if (!selectedConversation) return;
+  const handleTyping = () => {
+    setIsTyping(true);
     
+    if (typingTimeout) {
+      clearTimeout(typingTimeout);
+    }
+    
+    if (id && isConnected && !isUpdatePendingRef.current) {
+      isUpdatePendingRef.current = true;
+      sendTypingIndicator(id);
+      
+      setTimeout(() => {
+        isUpdatePendingRef.current = false;
+      }, 1000);
+    }
+    
+    const timeout = setTimeout(() => {
+      setIsTyping(false);
+    }, 2000);
+    
+    setTypingTimeout(timeout);
+  };
+
+  const handleRetryMessage = (messageId, content) => {
+    if (!id) return;
+    retryFailedMessage(id, messageId, content);
+    setTimeout(scrollToBottom, 100);
+  };
+  
+  const handleShowActionMenu = (action) => {
     switch (action) {
-      case 'finalizar':
-        finishConversation(selectedConversation._id)
-          .then(success => {
-            if (success) {
-              notificationService.showToast('Conversa finalizada com sucesso', 'success');
-            }
-          });
-        break;
       case 'transferir':
-        // Abrir modal para selecionar setor
-        const targetSectorId = window.prompt("Digite o ID do setor de destino");
-        if (targetSectorId) {
-          transferConversation(selectedConversation._id, targetSectorId)
-            .then(success => {
-              if (success) {
-                notificationService.showToast('Conversa transferida com sucesso', 'success');
-              }
-            });
-        }
+        setShowTransferDialog(true);
+        break;
+      case 'finalizar':
+        setShowFinishDialog(true);
         break;
       case 'arquivar':
-        archiveConversation(selectedConversation._id)
-          .then(success => {
-            if (success) {
-              notificationService.showToast('Conversa arquivada com sucesso', 'success');
-            }
-          });
+        setShowArchiveDialog(true);
         break;
       default:
         break;
     }
-  }, [selectedConversation, finishConversation, transferConversation, archiveConversation]);
-
-  // Se não há conversa selecionada, mostrar mensagem
-  if (!selectedConversation && !conversationId) {
-    return (
-      <div className="h-full flex flex-col items-center justify-center text-center p-6 bg-gray-900 rounded-lg border border-gray-800">
-        <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center mb-4">
-          <MessageSquare className="h-8 w-8 text-gray-400" />
-        </div>
-        <h3 className="text-xl text-white font-medium mb-2">Selecione uma conversa</h3>
-        <p className="text-gray-400 max-w-md">
-          Escolha uma conversa da lista para visualizar as mensagens e interagir com o cliente.
-        </p>
-      </div>
-    );
-  }
+  };
   
-  // Se está carregando a conversa
-  if (conversationId && !selectedConversation) {
+  const handleTransferConversation = async () => {
+    if (!selectedConversation || isActionLoading || !selectedSector) return;
+    
+    try {
+      setIsActionLoading(true);
+      setActionType('transferir');
+      
+      const success = await transferConversation(selectedConversation._id, selectedSector);
+      
+      if (success) {
+        notificationService.showToast('Conversa transferida com sucesso', 'success');
+        
+        // Atualize as conversas com um filtro vazio para garantir que todas sejam atualizadas
+        await refreshConversations({});
+        
+        setSelectedSector(null);
+        setShowTransferDialog(false);
+      } else {
+        notificationService.showToast('Erro ao transferir conversa. Tente novamente.', 'error');
+      }
+    } catch (error) {
+      console.error('Erro ao transferir conversa:', error);
+      notificationService.showToast('Erro ao transferir conversa: ' + (error.message || 'Erro desconhecido'), 'error');
+    } finally {
+      setIsActionLoading(false);
+      setActionType(null);
+    }
+  };
+  
+  const handleFinishConversation = async () => {
+    if (!selectedConversation || isActionLoading) return;
+    
+    try {
+      setIsActionLoading(true);
+      setActionType('finalizar');
+      
+      const success = await finishConversation(selectedConversation._id);
+      
+      if (success) {
+        notificationService.showToast('Conversa finalizada com sucesso', 'success');
+        
+        // Atualize tanto as conversas ativas quanto as concluídas
+        await refreshConversations({});
+        await refreshCompletedConversations();
+        
+        setShowFinishDialog(false);
+      } else {
+        notificationService.showToast('Erro ao finalizar conversa. Tente novamente.', 'error');
+      }
+    } catch (error) {
+      console.error('Erro ao finalizar conversa:', error);
+      notificationService.showToast('Erro ao finalizar conversa: ' + (error.message || 'Erro desconhecido'), 'error');
+    } finally {
+      setIsActionLoading(false);
+      setActionType(null);
+    }
+  };
+  
+  const handleArchiveConversation = async () => {
+    if (!selectedConversation || isActionLoading) return;
+    
+    try {
+      setIsActionLoading(true);
+      setActionType('arquivar');
+      
+      const success = await archiveConversation(selectedConversation._id);
+      
+      if (success) {
+        notificationService.showToast('Conversa arquivada com sucesso', 'success');
+        navigate('/conversations', { replace: true });
+      } else {
+        notificationService.showToast('Erro ao arquivar conversa. Tente novamente.', 'error');
+      }
+    } catch (error) {
+      console.error('Erro ao arquivar conversa:', error);
+      notificationService.showToast('Erro ao arquivar conversa: ' + (error.message || 'Erro desconhecido'), 'error');
+    } finally {
+      setIsActionLoading(false);
+      setActionType(null);
+    }
+  };
+
+  // Conteúdo do Dialog de transferência
+  const transferDialogContent = useCallback(() => (
+    <RadioGroup value={selectedSector} onValueChange={setSelectedSector}>
+      <div className="space-y-3 max-h-[300px] overflow-auto">
+        {sectors && sectors.map(sector => (
+          <div key={sector._id || sector.id} className="flex items-start space-x-2">
+            <RadioGroupItem 
+              value={sector._id || sector.id} 
+              id={`sector-${sector._id || sector.id}`}
+              className="mt-1 text-[#10b981] border-[#1f2937]/40"
+            />
+            <Label 
+              htmlFor={`sector-${sector._id || sector.id}`}
+              className="flex-1 cursor-pointer text-white"
+            >
+              <div className="font-medium">{sector.nome}</div>
+              {sector.responsavel && (
+                <div className="text-sm text-slate-400">
+                  Responsável: {sector.responsavel}
+                </div>
+              )}
+            </Label>
+          </div>
+        ))}
+      </div>
+    </RadioGroup>
+  ), [sectors, selectedSector]);
+
+  if (conversationLoading) {
+    return <LoadingSkeleton />;
+  }
+
+  if (!selectedConversation) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-center p-6 bg-gray-900">
-        <RefreshCw className="h-10 w-10 text-gray-400 animate-spin mb-4" />
-        <p className="text-gray-400">Carregando conversa...</p>
+      <div className="h-full flex flex-col p-4 lg:p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <button
+            onClick={handleBack}
+            className="flex items-center justify-center h-8 w-8 rounded-full bg-[#0f1621] text-slate-400 hover:text-white"
+            aria-label="Voltar"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <h1 className="text-xl font-bold text-white">Detalhes da Conversa</h1>
+        </div>
+        
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-12 h-12 border-4 border-t-[#10b981] border-[#1f2937]/50 rounded-full animate-spin mb-4 mx-auto"></div>
+            <p className="text-slate-400">Carregando conversa...</p>
+          </div>
+        </div>
       </div>
     );
   }
 
-  // Extrair dados da conversa selecionada
-  const messages = selectedConversation?.mensagens || [];
-  const activeTyper = typingUsers?.[selectedConversation._id];
-  const connectionStatus = isConnected ? 'connected' : connectionError ? 'disconnected' : 'connecting';
+  const { mensagens = [], status } = selectedConversation;
+  const isConversationFinished = status && status.toLowerCase() === STATUS.FINALIZADA;
 
   return (
-    <div className="h-full flex flex-col bg-gradient-to-b from-gray-900 to-gray-950">
-      {/* Cabeçalho */}
+    <div className="h-full flex flex-col overflow-hidden">
       <ConversationHeader 
-        conversation={selectedConversation} 
-        onBack={onBack}
-        onAction={handleAction}
-        onRefresh={handleRefresh}
-        isRefreshing={isRefreshing}
-        connectionStatus={connectionStatus}
+        conversation={selectedConversation}
+        onBack={handleBack}
+        isConnected={isConnected}
+        onShowActionMenu={handleShowActionMenu}
+        isConversationFinished={isConversationFinished}
       />
-
-      {/* Lista de mensagens */}
+      
       <div 
-        className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent"
+        className="flex-1 overflow-y-auto custom-scrollbar bg-[#070b11]"
         ref={messageListRef}
       >
-        {messages.length > 0 ? (
-          <div className="space-y-1">
-            {/* Renderizar mensagens */}
-            {messages.map((message, index) => (
-              <MessageBubble 
-                key={message._id || `msg-${index}`}
-                message={message}
-                prevMessage={index > 0 ? messages[index - 1] : null}
-                isGrouped={
-                  index > 0 && 
-                  messages[index - 1].remetente === message.remetente &&
-                  new Date(message.timestamp) - new Date(messages[index - 1].timestamp) < 60000 // 1 minuto
-                }
-                isLastInGroup={
-                  index < messages.length - 1 ? 
-                  messages[index + 1].remetente !== message.remetente : true
-                }
-              />
-            ))}
-            
-            {/* Indicador de digitação */}
-            {activeTyper && (
-              <TypingIndicator user={activeTyper} />
-            )}
-            
-            {/* Elemento para referência de rolagem */}
-            <div ref={messagesEndRef} />
-          </div>
-        ) : (
-          <div className="h-full flex flex-col items-center justify-center text-center p-6">
-            <div className="w-16 h-16 rounded-full bg-gray-800 flex items-center justify-center mb-4">
-              <MessageSquare className="h-8 w-8 text-gray-400" />
-            </div>
-            <h3 className="text-xl text-white font-medium mb-2">Conversa iniciada</h3>
-            <p className="text-gray-400 max-w-md">
-              Inicie a conversa enviando uma mensagem para {selectedConversation?.nomeCliente || 'o cliente'}.
-            </p>
-          </div>
-        )}
+        <MessageList 
+          messages={mensagens}
+          isTyping={isTyping}
+          onRetryMessage={handleRetryMessage}
+          messagesEndRef={messagesEndRef}
+        />
       </div>
-
-      {/* Campo de entrada de mensagem */}
+      
       <MessageInput 
         onSubmit={handleSendMessage}
-        disabled={isSubmitting || selectedConversation?.status === 'finalizada'}
-        onTyping={() => sendTypingIndicator(selectedConversation?._id)}
+        onTyping={handleTyping}
+        disabled={!isConnected || isConversationFinished}
+        isSubmitting={isActionLoading && actionType === 'message'}
       />
+      
+      {/* Dialog de Transferência */}
+      <Dialog open={showTransferDialog} onOpenChange={setShowTransferDialog}>
+        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
+          <DialogHeader>
+            <DialogTitle>Transferir conversa</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Selecione o setor para o qual deseja transferir esta conversa
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4">
+            {transferDialogContent()}
+          </div>
+          
+          <DialogFooter>
+            <Button 
+              variant="outline"
+              onClick={() => setShowTransferDialog(false)}
+              className="bg-[#101820] border-[#1f2937]/40 text-slate-300 hover:bg-[#101820] hover:text-white"
+              disabled={isActionLoading}
+            >
+              <X className="h-4 w-4 mr-2" />
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleTransferConversation}
+              disabled={!selectedSector || isActionLoading}
+              className="bg-gradient-to-br from-[#10b981] to-[#059669] text-white hover:opacity-90"
+            >
+              {isActionLoading ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Share className="h-4 w-4 mr-2" />
+              )}
+              {isActionLoading ? 'Transferindo...' : 'Transferir'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Dialog de Finalização */}
+      <Dialog open={showFinishDialog} onOpenChange={setShowFinishDialog}>
+        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
+          <DialogHeader>
+            <DialogTitle>Finalizar conversa</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Tem certeza que deseja finalizar esta conversa?
+              A conversa será movida para a lista de conversas concluídas.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <DialogFooter>
+            <Button 
+              variant="outline"
+              onClick={() => setShowFinishDialog(false)}
+              className="bg-[#101820] border-[#1f2937]/40 text-slate-300 hover:bg-[#101820] hover:text-white"
+              disabled={isActionLoading}
+            >
+              <X className="h-4 w-4 mr-2" />
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleFinishConversation}
+              disabled={isActionLoading}
+              className="bg-gradient-to-br from-[#10b981] to-[#059669] text-white hover:opacity-90"
+            >
+              {isActionLoading ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <CheckCircle className="h-4 w-4 mr-2" />
+              )}
+              {isActionLoading ? 'Finalizando...' : 'Finalizar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Dialog de Arquivamento */}
+      <Dialog open={showArchiveDialog} onOpenChange={setShowArchiveDialog}>
+        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
+          <DialogHeader>
+            <DialogTitle>Arquivar conversa</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Tem certeza que deseja arquivar esta conversa?
+              Conversas arquivadas não serão mais exibidas em nenhuma lista.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <DialogFooter>
+            <Button 
+              variant="outline"
+              onClick={() => setShowArchiveDialog(false)}
+              className="bg-[#101820] border-[#1f2937]/40 text-slate-300 hover:bg-[#101820] hover:text-white"
+              disabled={isActionLoading}
+            >
+              <X className="h-4 w-4 mr-2" />
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleArchiveConversation}
+              variant="destructive"
+              disabled={isActionLoading}
+              className="hover:opacity-90"
+            >
+              {isActionLoading ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Archive className="h-4 w-4 mr-2" />
+              )}
+              {isActionLoading ? 'Arquivando...' : 'Arquivar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

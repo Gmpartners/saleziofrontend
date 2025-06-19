@@ -13,12 +13,12 @@ export default {
   // Safelist para classes dinâmicas importantes
   safelist: [
     // Classes fundamentais que podem ser geradas dinamicamente
-    'bg-[#10b981]',
-    'bg-[#059669]',
-    'text-[#10b981]',
-    'text-[#34d399]',
-    'border-[#10b981]',
-    'border-[#059669]',
+    'bg-[#FF8F00]',
+    'bg-[#FF6F00]',
+    'text-[#FF8F00]',
+    'text-[#FFCA28]',
+    'border-[#FF8F00]',
+    'border-[#FF6F00]',
   ],
   theme: {
     container: {
@@ -34,11 +34,11 @@ export default {
       },
       colors: {
         tremor: {
-          faint: '#0B1812',
-          muted: colors.emerald[900],
-          subtle: colors.emerald[800],
-          DEFAULT: colors.emerald[600],
-          emphasis: colors.emerald[400],
+          faint: '#121212',
+          muted: colors.amber[900],
+          subtle: colors.amber[800],
+          DEFAULT: colors.amber[600],
+          emphasis: colors.amber[400],
           inverted: colors.slate[950],
         },
         border: {
@@ -93,18 +93,18 @@ export default {
         },
         'dark-tremor': {
           brand: {
-            faint: '#0B1812',
-            muted: colors.emerald[950],
-            subtle: colors.emerald[800],
-            DEFAULT: colors.emerald[600],
-            emphasis: colors.emerald[400],
+            faint: '#121212',
+            muted: colors.amber[950],
+            subtle: colors.amber[800],
+            DEFAULT: colors.amber[600],
+            emphasis: colors.amber[400],
             inverted: colors.slate[950],
           },
           border: {
             DEFAULT: 'rgba(31, 41, 55, 0.4)',
           },
           ring: {
-            DEFAULT: 'rgba(16, 185, 129, 0.5)',
+            DEFAULT: 'rgba(255, 143, 0, 0.5)',
           },
           content: {
             subtle: colors.slate[600],
@@ -123,6 +123,29 @@ export default {
           'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
           border: 'hsl(var(--sidebar-border))',
           ring: 'hsl(var(--sidebar-ring))',
+        },
+        // Firebase-themed colors
+        firebase: {
+          orange: {
+            light: '#FFCA28',
+            DEFAULT: '#FF8F00',
+            dark: '#FF6F00',
+          },
+          yellow: {
+            light: '#FFECB3',
+            DEFAULT: '#FFC107',
+            dark: '#FF8F00',
+          },
+          black: {
+            light: '#212121',
+            DEFAULT: '#121212',
+            dark: '#000000',
+          },
+          gray: {
+            light: '#BDBDBD',
+            DEFAULT: '#757575',
+            dark: '#424242',
+          }
         }
       },
       borderRadius: {
@@ -149,9 +172,9 @@ export default {
         'dark-tremor-input': '0 1px 2px 0 rgb(0 0 0 / 0.05)',
         'dark-tremor-card': '0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)',
         'dark-tremor-dropdown': '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)',
-        'glow-green': '0 0 15px rgba(16, 185, 129, 0.3)',
-        'glow-green-lg': '0 0 25px rgba(16, 185, 129, 0.4)',
-        'button': '0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(16, 185, 129, 0.1)',
+        'glow-orange': '0 0 15px rgba(255, 143, 0, 0.3)',
+        'glow-orange-lg': '0 0 25px rgba(255, 143, 0, 0.4)',
+        'button': '0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(255, 143, 0, 0.1)',
         'panel': '0 8px 16px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.1)',
         'panel-hover': '0 10px 25px rgba(0, 0, 0, 0.25), 0 2px 5px rgba(0, 0, 0, 0.15)',
       },
@@ -190,6 +213,18 @@ export default {
         "spin": {
           to: { transform: 'rotate(360deg)' }
         },
+        "flame": {
+          '0%, 100%': { 
+            transform: 'scale(1) translateY(0)',
+            opacity: '0.8',
+            filter: 'brightness(1)'
+          },
+          '50%': { 
+            transform: 'scale(1.05) translateY(-5px)',
+            opacity: '1',
+            filter: 'brightness(1.2)'
+          },
+        },
         
         // Animações refinadas
         "pulse-slow": {
@@ -213,8 +248,8 @@ export default {
           '100%': { transform: 'translateX(0)', opacity: '1' },
         },
         "glow-pulse": {
-          '0%, 100%': { boxShadow: '0 0 4px rgba(16, 185, 129, 0.2)' },
-          '50%': { boxShadow: '0 0 12px rgba(16, 185, 129, 0.4)' },
+          '0%, 100%': { boxShadow: '0 0 4px rgba(255, 143, 0, 0.2)' },
+          '50%': { boxShadow: '0 0 12px rgba(255, 143, 0, 0.4)' },
         },
       },
       animation: {
@@ -225,6 +260,7 @@ export default {
         "fadeInUp": 'fadeInUp 0.7s ease-out forwards',
         "fadeInDown": 'fadeInDown 0.7s ease-out forwards',
         "shimmer": 'shimmer 2.2s linear infinite',
+        "flame": 'flame 3s ease-in-out infinite',
         
         // Animações refinadas
         "pulse-slow": 'pulse-slow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
@@ -233,10 +269,13 @@ export default {
         "fade-in-left": 'fade-in-left 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards',
         "fade-in-right": 'fade-in-right 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards',
         "glow-pulse": 'glow-pulse 2.5s ease-in-out infinite',
+        "spin-slow": 'spin 3s linear infinite',
       },
       backgroundImage: {
-        'gradient-primary': 'linear-gradient(to right, #10b981, #059669)',
-        'gradient-card': 'linear-gradient(to bottom, rgba(15, 23, 42, 0.95), rgba(7, 11, 17, 0.98))',
+        'gradient-firebase': 'linear-gradient(to right, #FF8F00, #FF6F00)',
+        'gradient-card': 'linear-gradient(to bottom, rgba(18, 18, 18, 0.95), rgba(0, 0, 0, 0.98))',
+        'gradient-orange': 'linear-gradient(135deg, #FF8F00, #FF6F00)',
+        'gradient-dark': 'linear-gradient(180deg, #212121, #121212)',
       }
     },
   },
@@ -252,10 +291,10 @@ export default {
     function({ addBase, addUtilities }) {
       // Adiciona apenas utilitários essenciais customizados aqui
       addUtilities({
-        '.bg-gradient-primary': {
+        '.bg-gradient-firebase': {
           'background-image': 'linear-gradient(to right, var(--tw-gradient-stops))',
-          '--tw-gradient-from': '#10b981',
-          '--tw-gradient-to': '#059669',
+          '--tw-gradient-from': '#FF8F00',
+          '--tw-gradient-to': '#FF6F00',
           '--tw-gradient-stops': 'var(--tw-gradient-from), var(--tw-gradient-to)',
         },
         '.text-gradient': {
@@ -265,9 +304,9 @@ export default {
           'color': 'transparent',
         },
         '.bg-dark-card': {
-          'background-color': 'rgba(15, 23, 42, 0.6)',
+          'background-color': 'rgba(18, 18, 18, 0.6)',
           'backdrop-filter': 'blur(12px)',
-          'border': '1px solid rgba(31, 41, 55, 0.4)',
+          'border': '1px solid rgba(37, 37, 37, 0.4)',
         },
         '.backdrop-blur-card': {
           'backdrop-filter': 'blur(12px)',
@@ -279,6 +318,12 @@ export default {
             'display': 'none',
           },
         },
+        '.firebase-shadow': {
+          'box-shadow': '0 4px 12px rgba(255, 143, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.2)'
+        },
+        '.text-shadow-fire': {
+          'text-shadow': '0 1px 3px rgba(255, 143, 0, 0.3)'
+        }
       });
     },
   ],

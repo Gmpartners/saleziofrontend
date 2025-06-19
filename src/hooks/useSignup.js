@@ -13,75 +13,65 @@ export const useSignup = () => {
   const [isCancelled, setIsCancelled] = useState(false);
   const [error, setError] = useState(null);
   const [isPending, setIsPending] = useState(false);
-  const { dispatch } = useAuthContext();
+  const context = useAuthContext();
+  const dispatch = context?.dispatch;
 
-  const signup = async (email, password, name, phoneNumber, companyName, jobTitle) => {
+  const signup = async (email, password, name, phoneNumber) => {
     setError(null);
     setIsPending(true);
 
     try {
-      // First check if email exists
       const methods = await fetchSignInMethodsForEmail(auth, email);
       
-      // If methods array has length > 0, email exists
       if (methods.length > 0) {
         setError("Esse e-mail já está em uso. Tente outro.");
         setIsPending(false);
         return;
       }
       
-      // Attempt to create the user
       const res = await createUserWithEmailAndPassword(auth, email, password);
 
       if (!res) {
         throw new Error("Não foi possível realizar o cadastro.");
       }
 
-      // Update user profile with name
       await updateProfile(auth.currentUser, { displayName: name });
 
-      // Check if user document already exists
       const userDocRef = doc(db, "users", res.user.uid);
       const userDoc = await getDoc(userDocRef);
       
-      // Only create document if it doesn't exist
       if (!userDoc.exists()) {
-        // Create user document in Firestore with all fields
         await setDoc(userDocRef, {
           id: res.user.uid,
           online: true,
           createdAt: timestamp,
           email: email,
-          
-          // Usar displayName em vez de name (padronização)
           displayName: name,
-          
           phoneNumber: phoneNumber,
-          companyName: companyName,
-          jobTitle: jobTitle || "",
-          
-          // Campos adicionais para setorização
-          role: "agent",         // Por padrão, novos usuários são agentes
-          sector: "",            // Vazio por padrão, será atribuído pelo admin
-          sectorName: "",        // Vazio por padrão
-          isActive: true,        // Ativo por padrão
-          
+          role: "agent",
+          sector: "",
+          sectorName: "",
+          isActive: true,
           accountStatus: 'active',
           lastLogin: timestamp,
-          updatedAt: timestamp   // Adicionar timestamp de atualização
+          updatedAt: timestamp
         });
       }
 
-      // Dispatch login action
-      dispatch({ type: "LOGIN", payload: res.user });
+      // Verificar se o dispatch existe antes de usá-lo
+      if (dispatch) {
+        dispatch({ type: "LOGIN", payload: res.user });
+      } else {
+        console.warn("AuthContext dispatch não disponível - o usuário foi criado, mas o login automático pode não funcionar");
+        // Usuário foi criado, mas não conseguimos fazer login automaticamente
+        // Você pode redirecionar para a página de login se necessário
+      }
 
-      // Update state
       if (!isCancelled) {
         setIsPending(false);
         setError(null);
       }
     } catch (err) {
-      // More detailed error handling
       console.error("Erro durante o signup:", err.code, err.message);
       
       let errorMessage;

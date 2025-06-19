@@ -1,20 +1,31 @@
-// mobile-bottom-nav.jsx
 import { useNavigate, useLocation } from 'react-router-dom';
-import { MessageSquare, BarChart3, User, Settings } from 'lucide-react';
+import { 
+  MessageSquare, 
+  BarChart3, 
+  User, 
+  Settings, 
+  Layers, 
+  Users, 
+  Database,
+  Shield,
+  LogOut
+} from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAuthContext } from '../hooks/useAuthContext';
 
 const MobileBottomNav = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { isAdmin, logout } = useAuthContext();
   
-  // Define os itens de navegação
-  const navItems = [
+  // Itens de navegação para usuários regulares
+  const regularNavItems = [
     {
       id: 'conversations',
       label: 'Conversas',
       icon: <MessageSquare className="h-5 w-5" />,
       path: '/conversations',
-      active: location.pathname.includes('/conversations')
+      active: location.pathname.includes('/conversations') && !location.pathname.includes('/admin')
     },
     {
       id: 'analytics',
@@ -31,17 +42,56 @@ const MobileBottomNav = () => {
       active: location.pathname === '/profile'
     },
     {
-      id: 'settings',
-      label: 'Config',
-      icon: <Settings className="h-5 w-5" />,
-      path: '/settings',
-      active: location.pathname === '/settings'
+      id: 'logout',
+      label: 'Sair',
+      icon: <LogOut className="h-5 w-5" />,
+      action: logout,
+      active: false
     }
   ];
 
-  // Handler para navegação
-  const handleNavigate = (path) => {
-    navigate(path);
+  // Itens de navegação para administradores
+  const adminNavItems = [
+    {
+      id: 'admin-conversations',
+      label: 'Conversas',
+      icon: <Database className="h-5 w-5" />,
+      path: '/admin/conversations',
+      active: location.pathname.includes('/admin/conversations')
+    },
+    {
+      id: 'admin-users',
+      label: 'Usuários',
+      icon: <Users className="h-5 w-5" />,
+      path: '/admin/users',
+      active: location.pathname === '/admin/users'
+    },
+    {
+      id: 'admin-flow',
+      label: 'Fluxos',
+      icon: <Layers className="h-5 w-5" />,
+      path: '/admin/flow-orchestrator',
+      active: location.pathname === '/admin/flow-orchestrator'
+    },
+    {
+      id: 'logout',
+      label: 'Sair',
+      icon: <LogOut className="h-5 w-5" />,
+      action: logout,
+      active: false
+    }
+  ];
+
+  // Escolher quais itens mostrar com base no status de admin
+  const navItems = isAdmin ? adminNavItems : regularNavItems;
+
+  // Handler para navegação e ações
+  const handleNavItem = (item) => {
+    if (item.path) {
+      navigate(item.path);
+    } else if (item.action) {
+      item.action();
+    }
   };
 
   return (
@@ -55,7 +105,7 @@ const MobileBottomNav = () => {
         {navItems.map((item) => (
           <button
             key={item.id}
-            onClick={() => handleNavigate(item.path)}
+            onClick={() => handleNavItem(item)}
             className="flex flex-col items-center justify-center h-full w-1/4 relative"
           >
             <div 
@@ -63,7 +113,9 @@ const MobileBottomNav = () => {
                 p-2 rounded-lg transition-all duration-200
                 ${item.active 
                   ? 'text-[#10b981] bg-[#10b981]/10' 
-                  : 'text-slate-400 hover:text-white'}
+                  : item.id === 'logout'
+                    ? 'text-red-400 hover:text-red-300'
+                    : 'text-slate-400 hover:text-white'}
               `}
             >
               {item.icon}
@@ -71,7 +123,11 @@ const MobileBottomNav = () => {
             
             <span className={`
               text-[10px] font-medium transition-colors duration-200
-              ${item.active ? 'text-[#10b981]' : 'text-slate-500'}
+              ${item.active 
+                ? 'text-[#10b981]' 
+                : item.id === 'logout'
+                  ? 'text-red-400'
+                  : 'text-slate-500'}
             `}>
               {item.label}
             </span>

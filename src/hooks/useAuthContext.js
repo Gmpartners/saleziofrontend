@@ -7,8 +7,16 @@ export const useAuthContext = () => {
     throw Error("useAuthContext must be inside an AuthContextProvider.");
   }
 
-  return context;
+  const userProfile = context.userProfile || {};
+  const isAdmin = userProfile.role === 'admin' || 
+                  userProfile.role === 'administrator' || 
+                  userProfile.isAdmin === true;
+
+  return {
+    ...context,
+    isAdmin,
+    isAuthenticated: !!context.user
+  };
 };
 
-// Alias para manter compatibilidade com os novos componentes
 export const useAuth = useAuthContext;

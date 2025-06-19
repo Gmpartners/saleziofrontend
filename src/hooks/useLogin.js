@@ -4,7 +4,6 @@ import { doc, getDoc, updateDoc, collection, query, where, getDocs } from "fireb
 import { auth, db, timestamp } from "../firebase/config";
 import { useAuthContext } from "./useAuthContext";
 
-// Chave para armazenar no localStorage
 const ACCOUNT_STATUS_KEY = 'flowgenie_account_status';
 
 export const useLogin = () => {
@@ -12,7 +11,6 @@ export const useLogin = () => {
   const [error, setError] = useState(null);
   const [isPending, setIsPending] = useState(false);
   const [accountStatus, setAccountStatus] = useState(() => {
-    // Tentar recuperar do localStorage na inicialização
     const savedStatus = localStorage.getItem(ACCOUNT_STATUS_KEY);
     if (savedStatus) {
       try {
@@ -25,9 +23,8 @@ export const useLogin = () => {
     return null;
   });
   
-  const { dispatch } = useAuthContext();
+  const authContext = useAuthContext();
 
-  // Efeito para persistir o accountStatus no localStorage quando mudar
   useEffect(() => {
     if (accountStatus) {
       localStorage.setItem(ACCOUNT_STATUS_KEY, JSON.stringify(accountStatus));
@@ -36,27 +33,22 @@ export const useLogin = () => {
     }
   }, [accountStatus]);
 
-  // Função para limpar o status da conta
   const clearAccountStatus = () => {
     setAccountStatus(null);
     localStorage.removeItem(ACCOUNT_STATUS_KEY);
   };
 
-  // Função para verificar o status da conta pelo email antes de fazer login
-  const checkAccountStatus = async (email) => {
+  const checkAccountStatus = async (uid) => {
+    if (!uid) return { hasIssue: false };
+    
     try {
-      // Buscar usuário pelo email (agora permitido pelas regras do Firestore)
-      const usersRef = collection(db, "users");
-      const q = query(usersRef, where("email", "==", email));
-      const querySnapshot = await getDocs(q);
+      const userDocRef = doc(db, "users", uid);
+      const userDoc = await getDoc(userDocRef);
       
-      if (!querySnapshot.empty) {
-        // Se encontrou um usuário com este email
-        const userData = querySnapshot.docs[0].data();
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
         
-        // Verificar status da conta
         if (userData.accountStatus && userData.accountStatus !== 'active') {
-          // Conta existe mas não está ativa
           const statusDetails = {
             status: userData.accountStatus || 'inactive',
             message: userData.accountStatus === 'suspended' 
@@ -71,98 +63,88 @@ export const useLogin = () => {
         }
       }
       
-      // Conta não existe ou está ativa
       return { hasIssue: false };
     } catch (err) {
-      console.error("Erro ao verificar status da conta:", err);
-      return { hasIssue: false }; // Em caso de erro, permitir tentativa de login normal
+      console.error("Erro ao verificar status da conta via UID:", err);
+      return { hasIssue: false };
     }
   };
 
   const login = async (email, password) => {
     setError(null);
-    clearAccountStatus(); // Limpar status anterior
+    clearAccountStatus();
     setIsPending(true);
     
     try {
-      // VERIFICAÇÃO PRÉVIA: Verificar status da conta ANTES de tentar autenticar
-      const accountCheck = await checkAccountStatus(email);
-      
-      if (accountCheck.hasIssue) {
-        // Se a conta tem problemas, não tenta fazer login
-        setAccountStatus(accountCheck.statusDetails);
-        setIsPending(false);
-        return { error: true, accountStatus: accountCheck.statusDetails };
+      // Validar e limpar o email e senha antes de enviar
+      if (email === undefined || email === null || typeof email !== 'string') {
+        throw new Error("Email inválido");
       }
       
-      // Continuar com o login apenas se a conta não estiver suspensa/inativa
-      const res = await signInWithEmailAndPassword(auth, email, password);
+      if (password === undefined || password === null || typeof password !== 'string') {
+        throw new Error("Senha inválida");
+      }
+      
+      const emailClean = email.trim();
+      const passwordClean = password.trim();
+      
+      if (!emailClean) {
+        throw new Error("Email não pode estar vazio");
+      }
+      
+      if (!passwordClean) {
+        throw new Error("Senha não pode estar vazia");
+      }
+      
+      // Primeiro, tente fazer login com Firebase
+      const res = await signInWithEmailAndPassword(auth, emailClean, passwordClean);
 
       if (!res) {
         throw new Error("Falha no login");
       }
+      
+      localStorage.setItem('userId', res.user.uid);
+      
+      try {
+        const token = await res.user.getIdToken();
+        localStorage.setItem('authToken', token);
+        localStorage.setItem('apiToken', import.meta.env.VITE_API_TOKEN || '');
+      } catch (tokenErr) {
+        console.error("Erro ao obter token:", tokenErr);
+      }
+      
+      const accountCheck = await checkAccountStatus(res.user.uid);
+      
+      if (accountCheck.hasIssue) {
+        await auth.signOut();
+        setAccountStatus(accountCheck.statusDetails);
+        setIsPending(false);
+        return { error: true, accountStatus: accountCheck.statusDetails };
+      }
 
-      // Verificar o status da conta no Firestore (verificação secundária)
-      const userDocRef = doc(db, "users", res.user.uid);
-      const userDoc = await getDoc(userDocRef);
-
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        
-        // Verificação redundante (caso o status tenha mudado entre a primeira verificação e agora)
-        if (userData.accountStatus && userData.accountStatus !== 'active') {
-          // Se a conta não estiver ativa, fazer logout
-          await auth.signOut();
-          
-          const statusDetails = {
-            status: userData.accountStatus || 'inactive',
-            message: userData.accountStatus === 'suspended' 
-              ? "Sua conta está suspensa."
-              : "Sua conta está inativa.",
-            details: userData.accountStatus === 'suspended' 
-              ? "Esta operação foi realizada por um administrador por possível violação dos termos de uso."
-              : "Sua conta foi desativada. Entre em contato com o suporte para reativá-la."
-          };
-          
-          if (!isCancelled) {
-            setAccountStatus(statusDetails);
-            setIsPending(false);
-          }
-          
-          return { error: true, accountStatus: statusDetails };
-        }
-        
-        // Atualizar o status online e último login
+      try {
+        const userDocRef = doc(db, "users", res.user.uid);
         await updateDoc(userDocRef, {
           online: true,
           lastLogin: timestamp
         });
-      } else {
-        // Se o documento não existir, criar um com status ativo
-        await updateDoc(userDocRef, {
-          online: true,
-          id: res.user.uid,
-          email: email,
-          createdAt: timestamp,
-          lastLogin: timestamp,
-          accountStatus: 'active'
-        });
+      } catch (updateErr) {
+        console.error("Erro não crítico ao atualizar status online:", updateErr);
       }
 
-      // Despachar ação de login
-      dispatch({ type: "LOGIN", payload: res.user });
-
-      // Atualizar estado
-      if (!isCancelled) {
-        setIsPending(false);
-        setError(null);
+      // Agora, use o login do contexto de autenticação com os valores limpos
+      if (authContext && authContext.login) {
+        await authContext.login(emailClean, passwordClean);
       }
+
+      setIsPending(false);
+      setError(null);
       
       return { success: true };
+      
     } catch (err) {
       console.error("Erro durante o login:", err.code, err.message);
       
-      // Tratamento detalhado de erros
       let errorMessage;
       switch(err.code) {
         case "auth/user-not-found":
@@ -182,7 +164,11 @@ export const useLogin = () => {
           errorMessage = "Erro de conexão. Verifique sua internet.";
           break;
         default:
-          errorMessage = "Falha no login. Tente novamente.";
+          if (err.message.includes('invalid-email') || err.message.includes('invalid-value')) {
+            errorMessage = "Formato de email inválido.";
+          } else {
+            errorMessage = err.message || "Falha no login. Tente novamente.";
+          }
       }
 
       if (!isCancelled) {

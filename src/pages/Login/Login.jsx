@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { useLogin } from "../../hooks/useLogin";
 import { cn } from "@/lib/utils.js";
 
-// UI Components
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,7 +16,6 @@ import {
   DialogFooter
 } from "@/components/ui/dialog";
 
-// Icons
 import { 
   Mail, 
   Lock, 
@@ -31,6 +30,7 @@ import {
 } from 'lucide-react';
 
 export default function Login() {
+  const navigate = useNavigate();
   const { login, isPending, error, accountStatus, clearAccountStatus } = useLogin();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -44,14 +44,12 @@ export default function Login() {
     general: ""
   });
 
-  // Verificar status da conta na inicialização
   useEffect(() => {
     if (accountStatus) {
       setStatusDialogOpen(true);
     }
   }, [accountStatus]);
 
-  // Evitar fechamento do diálogo quando accountStatus existe
   const handleOpenChange = (open) => {
     if (!open && accountStatus) {
       return; 
@@ -59,20 +57,19 @@ export default function Login() {
     setStatusDialogOpen(open);
   };
 
-  // Animação na carga da página
   useEffect(() => {
     setTimeout(() => {
       setIsLoaded(true);
     }, 300);
+    
+    localStorage.setItem('apiToken', import.meta.env.VITE_API_TOKEN || '');
   }, []);
 
-  // Validação de email
   const validateEmail = (email) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
   };
 
-  // Validação do formulário
   const validateForm = () => {
     const errors = {
       email: "",
@@ -81,7 +78,6 @@ export default function Login() {
     };
     let isValid = true;
 
-    // Validação de email
     if (!email) {
       errors.email = "O email é obrigatório";
       isValid = false;
@@ -90,7 +86,6 @@ export default function Login() {
       isValid = false;
     }
 
-    // Validação de senha
     if (!password) {
       errors.password = "A senha é obrigatória";
       isValid = false;
@@ -103,7 +98,6 @@ export default function Login() {
     return isValid;
   };
 
-  // Manipulador de login
   const handleLogin = async (e) => {
     e.preventDefault();
 
@@ -112,29 +106,39 @@ export default function Login() {
     }
 
     try {
-      // Limpar erros gerais antes de tentar login
       setValidationErrors({
         ...validationErrors,
         general: ""
       });
       
-      await login(email, password);
+      const emailClean = email ? email.trim() : "";
+      const passwordClean = password ? password.trim() : "";
+      
+      const result = await login(emailClean, passwordClean);
+      
+      if (result && result.success) {
+        localStorage.setItem('apiToken', import.meta.env.VITE_API_TOKEN || '');
+        navigate('/conversations');
+      } else if (result && result.error) {
+        setValidationErrors({
+          ...validationErrors,
+          general: result.message || "Erro de autenticação"
+        });
+      }
       
     } catch (err) {
       console.error("Erro ao fazer login:", err);
       setValidationErrors({
         ...validationErrors,
-        general: "Ocorreu um erro ao tentar fazer login. Tente novamente."
+        general: err.message || "Ocorreu um erro ao tentar fazer login. Tente novamente."
       });
     }
   };
 
-  // Fechar diálogo e limpar estado
   const handleCloseDialog = () => {
     clearAccountStatus();
     setStatusDialogOpen(false);
     
-    // Limpar campos do formulário
     setEmail("");
     setPassword("");
     setValidationErrors({
@@ -144,12 +148,10 @@ export default function Login() {
     });
   };
 
-  // Contato via email
   const handleContactSupport = () => {
     window.location.href = "mailto:suporte@whatsappcrm.com.br?subject=Reativação%20de%20Conta";
   };
   
-  // Contato via WhatsApp
   const handleContactWhatsapp = () => {
     const message = `Olá, gostaria de solicitar a reativação da minha conta na plataforma WhatsApp CRM. Email: ${email}`;
     const encodedMessage = encodeURIComponent(message);
@@ -158,9 +160,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#040406] overflow-auto">
-      {/* Background e efeitos */}
       <div className="fixed inset-0 z-0 pointer-events-none">
-        {/* Partículas */}
         <div className="absolute inset-0 overflow-hidden">
           {[...Array(50)].map((_, index) => (
             <div 
@@ -179,20 +179,16 @@ export default function Login() {
           ))}
         </div>
 
-        {/* Gradientes */}
         <div className="absolute inset-0 overflow-hidden">
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80vw] h-[80vw] rounded-full bg-gradient-to-r from-green-500/10 to-green-500/0 blur-[100px] opacity-30 animate-pulse"></div>
           <div className="absolute -top-[10%] -left-[10%] w-[80vw] h-[80vw] rounded-full bg-gradient-to-r from-green-600/10 to-green-600/0 blur-[100px] opacity-20 animate-pulse" style={{animationDuration: '12s'}}></div>
           <div className="absolute -bottom-[20%] -right-[10%] w-[70vw] h-[70vw] rounded-full bg-gradient-to-r from-green-700/10 to-green-700/0 blur-[100px] opacity-20 animate-pulse" style={{animationDuration: '15s'}}></div>
         </div>
 
-        {/* Grid background */}
         <div className="absolute inset-0 bg-[url('https://flowbite.s3.amazonaws.com/blocks/marketing-ui/hero/grid-pattern-dark.svg')] bg-repeat opacity-[0.03]"></div>
       </div>
 
-      {/* Conteúdo principal */}
       <div className="container mx-auto relative z-10 px-4 py-8 flex flex-col items-center justify-center flex-grow">
-        {/* Header com link de retorno */}
         <div className={cn(
           "w-full max-w-md mb-8",
           isLoaded ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2",
@@ -204,7 +200,6 @@ export default function Login() {
           </Link>
         </div>
 
-        {/* Logo */}
         <div className={cn(
           "mb-8 flex items-center justify-center gap-3",
           isLoaded ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4",
@@ -214,13 +209,11 @@ export default function Login() {
           <h1 className="text-3xl font-bold text-white">WhatsApp<span className="text-green-500">CRM</span></h1>
         </div>
 
-        {/* Login Card */}
         <Card className={cn(
           "w-full max-w-md bg-[#131524]/90 border-[#262b45] text-white rounded-xl backdrop-blur-sm shadow-xl",
           isLoaded ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8",
           "transition-all duration-500 delay-200"
         )}>
-          {/* Green highlight border */}
           <div className="h-1 w-full bg-gradient-to-r from-green-500 via-green-600 to-emerald-700"></div>
           
           <CardHeader className="space-y-1 pt-8 pb-2">
@@ -234,7 +227,6 @@ export default function Login() {
           
           <CardContent className="pt-6 pb-8">
             <form onSubmit={handleLogin} className="space-y-5">
-              {/* Email Field */}
               <div className="space-y-1">
                 <div className={cn(
                   "relative",
@@ -273,7 +265,6 @@ export default function Login() {
                 )}
               </div>
 
-              {/* Password Field */}
               <div className="space-y-1">
                 <div className={cn(
                   "relative",
@@ -303,7 +294,6 @@ export default function Login() {
                     )}
                   />
                   
-                  {/* Toggle password visibility */}
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
@@ -321,7 +311,6 @@ export default function Login() {
                 )}
               </div>
 
-              {/* Remember me and Forgot password */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
                   <div className="relative inline-flex items-center">
@@ -362,17 +351,15 @@ export default function Login() {
                 </Link>
               </div>
 
-              {/* Error message */}
-              {validationErrors.general && (
+              {(validationErrors.general || error) && (
                 <div className="rounded-lg p-4 text-center border bg-red-500/10 border-red-500/30 text-red-400">
                   <p className="text-sm font-medium flex items-center justify-center">
                     <Power className="h-4 w-4 mr-2" />
-                    {validationErrors.general}
+                    {validationErrors.general || error}
                   </p>
                 </div>
               )}
 
-              {/* Login Button */}
               <div className="pt-2">
                 <Button 
                   type="submit"
@@ -400,7 +387,6 @@ export default function Login() {
                 </Button>
               </div>
               
-              {/* Signup link */}
               <div className="text-center pt-3">
                 <p className="text-sm text-gray-400">
                   Não tem uma conta?{' '}
@@ -416,7 +402,6 @@ export default function Login() {
           </CardContent>
         </Card>
 
-        {/* Footer */}
         <div className={cn(
           "mt-8 mb-4 text-center text-xs text-slate-600",
           isLoaded ? "opacity-100" : "opacity-0",
@@ -426,7 +411,6 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Account status dialog */}
       <Dialog 
         open={statusDialogOpen} 
         onOpenChange={handleOpenChange}
@@ -468,7 +452,6 @@ export default function Login() {
           </div>
 
           <DialogFooter className="sm:justify-center gap-2 flex-col">
-            {/* WhatsApp button */}
             <Button 
               className="bg-green-600 hover:bg-green-700 flex items-center justify-center gap-2 w-full sm:w-auto"
               onClick={handleContactWhatsapp}
@@ -477,7 +460,6 @@ export default function Login() {
               Contatar via WhatsApp
             </Button>
             
-            {/* Email button */}
             <Button 
               className="bg-blue-600 hover:bg-blue-700 flex items-center justify-center gap-2 w-full sm:w-auto"
               onClick={handleContactSupport}
@@ -497,7 +479,6 @@ export default function Login() {
         </DialogContent>
       </Dialog>
 
-      {/* Animações */}
       <style jsx="true">{`
         @keyframes float {
           0% { transform: translate(0, 0); }

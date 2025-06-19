@@ -1,550 +1,361 @@
 import axios from 'axios';
-import { API_URL, API_TOKEN, AUTH_HEADER, API_ENDPOINTS } from '../config/syncConfig';
 
-/**
- * Serviço otimizado para comunicação com a API MultiFlow
- */
+class LRUCache {
+  constructor(capacity) {
+    this.capacity = capacity;
+    this.cache = new Map();
+    this.recentlyUsed = [];
+  }
+
+  get(key) {
+    if (!this.cache.has(key)) return null;
+    this.updateUsage(key);
+    return this.cache.get(key);
+  }
+
+  set(key, value) {
+    if (this.cache.size >= this.capacity && !this.cache.has(key)) {
+      const leastUsedKey = this.recentlyUsed.shift();
+      this.cache.delete(leastUsedKey);
+    }
+    this.cache.set(key, value);
+    this.updateUsage(key);
+    return true;
+  }
+
+  delete(key) {
+    if (!this.cache.has(key)) return false;
+    this.cache.delete(key);
+    const index = this.recentlyUsed.indexOf(key);
+    if (index > -1) {
+      this.recentlyUsed.splice(index, 1);
+    }
+    return true;
+  }
+
+  has(key) {
+    return this.cache.has(key);
+  }
+
+  updateUsage(key) {
+    const index = this.recentlyUsed.indexOf(key);
+    if (index > -1) {
+      this.recentlyUsed.splice(index, 1);
+    }
+    this.recentlyUsed.push(key);
+  }
+
+  clear() {
+    this.cache.clear();
+    this.recentlyUsed = [];
+  }
+
+  getSize() {
+    return this.cache.size;
+  }
+}
+
 class MultiflowApiService {
   constructor() {
-    // Inicialização básica do axios
+    this.API_URL = import.meta.env.VITE_API_URL || 'https://multi.compracomsegurancaeconfianca.com/api';
+    this.API_TOKEN = import.meta.env.VITE_API_TOKEN || 'netwydZWjrJpA';
+    this.AUTH_HEADER = 'x-api-token';
+    this.ADMIN_ID = 'wFU4uEWg3vhC8lWVSJKc7dg8se72';
+    
+    const storedToken = localStorage.getItem('apiToken');
+    if (!storedToken || storedToken === 'undefined' || storedToken === 'null') {
+      localStorage.setItem('apiToken', this.API_TOKEN);
+    } else {
+      this.API_TOKEN = storedToken;
+    }
+    
     this.api = axios.create({
-      baseURL: API_URL,
+      baseURL: this.API_URL,
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        [this.AUTH_HEADER]: this.API_TOKEN
       },
-      timeout: 15000 // 15 segundos
+      timeout: 30000
     });
     
-    // Adicionar interceptor para garantir que o token esteja sempre presente
-    this.api.interceptors.request.use((config) => {
-      // Tentar obter o token do localStorage primeiro (mais atualizado)
-      const token = localStorage.getItem('apiToken') || API_TOKEN;
-      
-      if (token) {
-        config.headers[AUTH_HEADER] = token;
-      } else {
-        console.warn('Token de API não encontrado!');
-      }
-      
-      return config;
-    });
+    this.setupInterceptors();
+    this.initializeCache();
+    this.refreshToken();
     
-    // Cache para armazenar respostas
-    this.cache = {};
-    this.cacheDuration = 5 * 60 * 1000; // 5 minutos em milissegundos
-    this.setoresCache = null;
-    this.allConversasCache = []; // Cache global para todas as conversas ativas
-    this.completedConversasCache = []; // Cache para conversas concluídas
-    this.conversationCache = new Map(); // Cache por ID de conversa
-    this.lastConversasFetch = 0; // Timestamp da última busca de conversas
-    this.lastCompletedConversasFetch = 0; // Timestamp da última busca de conversas concluídas
-    this.isFetchingConversas = false; // Flag para evitar requisições duplicadas
-    this.isFetchingCompletedConversas = false; // Flag para evitar requisições duplicadas
-    this.pendingFetches = new Map(); // Controlar requisições em andamento por conversationId
+    this.conversationIdMap = new Map();
+    this.reverseConversationIdMap = new Map();
   }
 
-  /**
-   * Obtém o ID do usuário do localStorage
-   */
-  getUserId() {
-    return localStorage.getItem('userId') || '';
-  }
-
-  /**
-   * Recupera todos os setores do usuário
-   */
-  async getSetores(userId = this.getUserId()) {
-    try {
-      console.log(`Buscando setores para o usuário: ${userId}`);
-      
-      // Verificar cache
-      const cacheKey = `setores-${userId}`;
-      if (this.cache[cacheKey] && Date.now() - this.cache[cacheKey].timestamp < this.cacheDuration) {
-        console.log('Usando cache de setores');
-        return this.cache[cacheKey].data;
-      }
-      
-      const response = await this.api.get(API_ENDPOINTS.getSetores(userId));
-      
-      // Armazenar em cache
-      this.cache[cacheKey] = {
-        data: response.data,
-        timestamp: Date.now()
-      };
-      
-      // Atualizar cache de setores
-      if (response.data.success && Array.isArray(response.data.data)) {
-        this.setoresCache = response.data.data;
-      }
-      
-      console.log(`Setores obtidos com sucesso: ${response.data.data?.length || 0} setores`);
-      return response.data;
-    } catch (error) {
-      console.error('Erro ao buscar setores:', error.message);
-      
-      // Retornar dados de fallback em caso de erro
-      return {
-        success: false,
-        error: error.message,
-        data: []
-      };
-    }
-  }
-
-  /**
-   * Obtém um setor específico pelo ID
-   */
-  async getSetorById(setorId, userId = this.getUserId()) {
-    try {
-      console.log(`Buscando setor ${setorId} para o usuário: ${userId}`);
-      
-      // Verificar cache
-      const cacheKey = `setor-${userId}-${setorId}`;
-      if (this.cache[cacheKey] && Date.now() - this.cache[cacheKey].timestamp < this.cacheDuration) {
-        console.log('Usando cache de setor');
-        return this.cache[cacheKey].data;
-      }
-      
-      const response = await this.api.get(API_ENDPOINTS.getSetor(userId, setorId));
-      
-      // Armazenar em cache
-      this.cache[cacheKey] = {
-        data: response.data,
-        timestamp: Date.now()
-      };
-      
-      console.log(`Setor obtido com sucesso: ${response.data.data?.nome || 'N/A'}`);
-      return response.data;
-    } catch (error) {
-      console.error(`Erro ao buscar setor ${setorId}:`, error.message);
-      
-      // Retornar dados de fallback em caso de erro
-      return {
-        success: false,
-        error: error.message,
-        data: null
-      };
-    }
-  }
-
-  /**
-   * Cria um novo setor
-   */
-  async createSetor(setorData, userId = this.getUserId()) {
-    try {
-      console.log(`Criando setor para o usuário: ${userId}`, setorData);
-      
-      const payload = {
-        nome: setorData.nome,
-        descricao: setorData.descricao || `Setor ${setorData.nome}`,
-        responsavel: setorData.responsavel || "Administrador",
-        ativo: setorData.ativo !== false
-      };
-      
-      const response = await this.api.post(API_ENDPOINTS.createSetor(userId), payload);
-      
-      // Invalidar cache de setores
-      delete this.cache[`setores-${userId}`];
-      this.setoresCache = null;
-      
-      console.log(`Setor criado com sucesso: ${response.data.data?._id || 'N/A'}`);
-      return response.data;
-    } catch (error) {
-      console.error('Erro ao criar setor:', error.message);
-      
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Atualiza um setor existente
-   */
-  async updateSetor(setorId, setorData, userId = this.getUserId()) {
-    try {
-      console.log(`Atualizando setor ${setorId} para o usuário: ${userId}`, setorData);
-      
-      const payload = {
-        nome: setorData.nome,
-        descricao: setorData.descricao,
-        responsavel: setorData.responsavel,
-        ativo: setorData.ativo
-      };
-      
-      // Remover campos undefined
-      Object.keys(payload).forEach(key => payload[key] === undefined && delete payload[key]);
-      
-      const response = await this.api.put(API_ENDPOINTS.updateSetor(userId, setorId), payload);
-      
-      // Invalidar cache de setores
-      delete this.cache[`setores-${userId}`];
-      delete this.cache[`setor-${userId}-${setorId}`];
-      this.setoresCache = null;
-      
-      console.log(`Setor atualizado com sucesso: ${response.data.data?.nome || 'N/A'}`);
-      return response.data;
-    } catch (error) {
-      console.error(`Erro ao atualizar setor ${setorId}:`, error.message);
-      
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Exclui um setor
-   */
-  async deleteSetor(setorId, userId = this.getUserId()) {
-    try {
-      console.log(`Excluindo setor ${setorId} para o usuário: ${userId}`);
-      
-      const response = await this.api.delete(API_ENDPOINTS.deleteSetor(userId, setorId));
-      
-      // Invalidar cache de setores
-      delete this.cache[`setores-${userId}`];
-      delete this.cache[`setor-${userId}-${setorId}`];
-      this.setoresCache = null;
-      
-      console.log(`Setor excluído com sucesso: ${setorId}`);
-      return response.data;
-    } catch (error) {
-      console.error(`Erro ao excluir setor ${setorId}:`, error.message);
-      
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Obtém lista de conversas com filtros opcionais
-   */
-  async getConversas(filters = {}, userId = this.getUserId()) {
-    // Verificar se são conversas finalizadas
-    const isCompletedRequest = filters.status && 
-        (Array.isArray(filters.status) ? 
-            filters.status.includes('finalizada') : 
-            filters.status === 'finalizada');
-    
-    // Se for uma requisição de conversas finalizadas, usar método específico
-    if (isCompletedRequest) {
-      return this.getCompletedConversas(filters, userId);
-    }
-    
-    // Verificar se já existe uma requisição em andamento
-    if (this.isFetchingConversas) {
-      console.log('Já existe uma requisição de conversas em andamento, usando cache existente');
-      return {
-        success: true,
-        data: this.allConversasCache
-      };
-    }
-    
-    // Verificar se o cache está recente (menos de 1 minuto)
-    const now = Date.now();
-    const cacheAge = now - this.lastConversasFetch;
-    if (this.allConversasCache.length > 0 && cacheAge < 60000) {
-      console.log(`Usando cache de conversas (${this.allConversasCache.length} conversas, idade: ${cacheAge}ms)`);
-      return {
-        success: true,
-        data: this.allConversasCache
-      };
-    }
-    
-    this.isFetchingConversas = true;
-    
-    try {
-      console.log(`Buscando conversas para o usuário: ${userId}`, filters);
-      
-      // Construir parâmetros de consulta
-      const params = {};
-      
-      if (filters.status) {
-        if (Array.isArray(filters.status)) {
-          params.status = filters.status.join(',');
+  setupInterceptors() {
+    this.api.interceptors.request.use(
+      config => {
+        const currentToken = localStorage.getItem('apiToken') || this.API_TOKEN;
+        
+        if (!currentToken || currentToken === 'undefined' || currentToken === 'null') {
+          localStorage.setItem('apiToken', this.API_TOKEN);
+          config.headers[this.AUTH_HEADER] = this.API_TOKEN;
         } else {
-          params.status = filters.status;
-        }
-      }
-      
-      if (filters.setorId) {
-        params.setorId = filters.setorId;
-      }
-      
-      if (filters.arquivada !== undefined) {
-        params.arquivada = filters.arquivada;
-      }
-      
-      params.page = filters.page || 1;
-      params.limit = filters.limit || 50; // 50 para mostrar mais conversas
-      
-      const response = await this.api.get(API_ENDPOINTS.getConversas(userId), { params });
-      this.lastConversasFetch = now;
-      
-      // Se a requisição for bem-sucedida e tiver dados, atualizar o cache
-      if (response.data.success && Array.isArray(response.data.data)) {
-        // Se não estiver filtrando por setor, usar como cache global
-        if (!filters.setorId) {
-          this.allConversasCache = response.data.data.map(conv => ({
-            ...conv,
-            unreadCount: 0,
-            lastMessageRead: true
-          }));
-        } else {
-          // Se estiver filtrando por setor, adicionar ao cache global apenas se não existirem
-          response.data.data.forEach(conv => {
-            const existingIndex = this.allConversasCache.findIndex(c => c._id === conv._id);
-            if (existingIndex >= 0) {
-              this.allConversasCache[existingIndex] = {
-                ...conv,
-                unreadCount: this.allConversasCache[existingIndex].unreadCount || 0,
-                lastMessageRead: this.allConversasCache[existingIndex].lastMessageRead !== undefined ? 
-                  this.allConversasCache[existingIndex].lastMessageRead : true
-              };
-            } else {
-              this.allConversasCache.push({
-                ...conv,
-                unreadCount: 0,
-                lastMessageRead: true
-              });
-            }
-          });
+          config.headers[this.AUTH_HEADER] = currentToken;
         }
         
-        console.log(`Conversas obtidas com sucesso: ${response.data.data.length} conversas`);
-      } else {
-        console.warn('Resposta vazia ou inválida da API de conversas');
+        return config;
+      },
+      error => {
+        console.error('Erro no interceptor de requisição:', error);
+        return Promise.reject(error);
       }
-      
-      return response.data;
+    );
+    
+    this.api.interceptors.response.use(
+      response => response.data,
+      error => {
+        console.error('Erro na resposta da API:', error.response?.data || error.message);
+        
+        if (error.response && error.response.status === 401) {
+          console.log('Token inválido ou expirado, atualizando...');
+          localStorage.setItem('apiToken', this.API_TOKEN);
+          this.refreshToken();
+        }
+        
+        return Promise.reject(error.response?.data?.message || error.message);
+      }
+    );
+  }
+
+  refreshToken() {
+    const apiToken = import.meta.env.VITE_API_TOKEN || 'netwydZWjrJpA';
+    this.API_TOKEN = apiToken;
+    localStorage.setItem('apiToken', apiToken);
+    
+    this.api.defaults.headers[this.AUTH_HEADER] = apiToken;
+    console.log('Token API atualizado');
+  }
+
+  updateToken(token) {
+    if (!token || token === 'undefined' || token === 'null') {
+      token = this.API_TOKEN;
+    }
+    
+    this.API_TOKEN = token;
+    localStorage.setItem('apiToken', token);
+    this.api.defaults.headers[this.AUTH_HEADER] = token;
+    return this;
+  }
+
+  initializeCache() {
+    this.cache = {
+      empresas: { data: null, timestamp: 0 },
+      setores: { data: null, timestamp: 0 },
+      conversas: { data: [], timestamp: 0 },
+      conversasFinalizadas: { data: [], timestamp: 0 },
+      configIA: { data: null, timestamp: 0 },
+      flowConfig: { data: null, timestamp: 0 },
+      users: { data: null, timestamp: 0 }
+    };
+    
+    this.conversationDetailsCache = new LRUCache(50);
+    this.setorDetailsCache = new LRUCache(20);
+    this.empresaDetailsCache = new LRUCache(20);
+    this.userDetailsCache = new LRUCache(100);
+    
+    this.cacheDuration = {
+      short: 30 * 1000,
+      medium: 3 * 60 * 1000,
+      long: 15 * 60 * 1000
+    };
+    
+    this.pendingRequests = new Map();
+    this.processingOperations = new Set();
+  }
+  
+  async get(url, config = {}) {
+    try {
+      return await this.api.get(url, config);
     } catch (error) {
-      console.error('Erro ao buscar conversas:', error.message);
-      
-      // Se tiver cache global e ocorrer erro, retornar o cache como fallback
-      if (this.allConversasCache.length > 0) {
-        console.log(`Usando cache global como fallback (${this.allConversasCache.length} conversas)`);
-        return {
-          success: true,
-          error: error.message,
-          data: this.allConversasCache
-        };
+      console.error(`Erro na requisição GET para ${url}:`, error);
+      throw error;
+    }
+  }
+  
+  async post(url, data = {}, config = {}) {
+    try {
+      if (url.includes('/empresas') && !data.empresaId) {
+        const timestamp = Date.now();
+        const random = Math.floor(Math.random() * 1000);
+        data.empresaId = `EMP${timestamp}${random}`;
       }
       
-      return {
-        success: false,
-        error: error.message,
-        data: []
-      };
-    } finally {
-      // Atraso para evitar novas requisições imediatamente
-      setTimeout(() => {
-        this.isFetchingConversas = false;
-      }, 1000);
+      if (url.includes('/setores') && !data.setorId && !url.includes('/detalhado')) {
+        const timestamp = Date.now();
+        const random = Math.floor(Math.random() * 1000);
+        data.setorId = `SET${timestamp}${random}`;
+      }
+      
+      return await this.api.post(url, data, config);
+    } catch (error) {
+      console.error(`Erro na requisição POST para ${url}:`, error);
+      throw error;
+    }
+  }
+  
+  async put(url, data = {}, config = {}) {
+    try {
+      return await this.api.put(url, data, config);
+    } catch (error) {
+      console.error(`Erro na requisição PUT para ${url}:`, error);
+      throw error;
+    }
+  }
+  
+  async delete(url, config = {}) {
+    try {
+      return await this.api.delete(url, config);
+    } catch (error) {
+      console.error(`Erro na requisição DELETE para ${url}:`, error);
+      throw error;
     }
   }
 
-  /**
-   * Obtém lista de conversas concluídas
-   */
-  async getCompletedConversas(filters = {}, userId = this.getUserId()) {
-    // Verificar se já existe uma requisição em andamento
-    if (this.isFetchingCompletedConversas) {
-      console.log('Já existe uma requisição de conversas concluídas em andamento, usando cache existente');
-      return {
-        success: true,
-        data: this.completedConversasCache
-      };
-    }
+  logError(method, error, context = {}) {
+    const errorDetails = {
+      method,
+      message: error.message || 'Erro desconhecido',
+      status: error.response?.status,
+      data: error.response?.data,
+      context
+    };
     
-    // Verificar se o cache está recente (menos de 5 minutos para conversas concluídas)
-    const now = Date.now();
-    const cacheAge = now - this.lastCompletedConversasFetch;
-    if (this.completedConversasCache.length > 0 && cacheAge < 300000) {
-      console.log(`Usando cache de conversas concluídas (${this.completedConversasCache.length} conversas, idade: ${cacheAge}ms)`);
-      return {
-        success: true,
-        data: this.completedConversasCache
-      };
-    }
+    console.error(`[MultiFlowAPI Error] ${method}:`, errorDetails);
     
-    this.isFetchingCompletedConversas = true;
-    
-    try {
-      console.log(`Buscando conversas concluídas para o usuário: ${userId}`, filters);
+    if (error.response?.status === 403 || 
+        (error.response?.data?.message && error.response?.data?.message.includes('permitido apenas para administradores'))) {
+      console.error('ERRO DE PERMISSÃO: Verifique se os parâmetros de admin estão corretos');
       
-      // Garantir que estamos buscando apenas conversas finalizadas
-      const params = {
-        status: 'finalizada',
-        page: filters.page || 1,
-        limit: filters.limit || 50,
-      };
-      
-      if (filters.setorId) {
-        params.setorId = filters.setorId;
-      }
-      
-      if (filters.arquivada !== undefined) {
-        params.arquivada = filters.arquivada;
-      } else {
-        params.arquivada = false; // Por padrão, buscar apenas não arquivadas
-      }
-      
-      const response = await this.api.get(API_ENDPOINTS.getConversas(userId), { params });
-      this.lastCompletedConversasFetch = now;
-      
-      // Se a requisição for bem-sucedida e tiver dados, atualizar o cache
-      if (response.data.success && Array.isArray(response.data.data)) {
-        this.completedConversasCache = response.data.data;
-        console.log(`Conversas concluídas obtidas com sucesso: ${response.data.data.length} conversas`);
-      } else {
-        console.warn('Resposta vazia ou inválida da API de conversas concluídas');
-      }
-      
-      return response.data;
-    } catch (error) {
-      console.error('Erro ao buscar conversas concluídas:', error.message);
-      
-      // Se tiver cache e ocorrer erro, retornar o cache como fallback
-      if (this.completedConversasCache.length > 0) {
-        console.log(`Usando cache como fallback (${this.completedConversasCache.length} conversas concluídas)`);
-        return {
-          success: true,
-          error: error.message,
-          data: this.completedConversasCache
-        };
-      }
-      
-      return {
-        success: false,
-        error: error.message,
-        data: []
-      };
-    } finally {
-      // Atraso para evitar novas requisições imediatamente
-      setTimeout(() => {
-        this.isFetchingCompletedConversas = false;
-      }, 1000);
-    }
-  }
-
-  /**
-   * Obtém uma conversa específica pelo ID com controle de cache e prevenção de requisições duplicadas
-   */
-  async getConversa(conversaId, userId = this.getUserId(), forceRefresh = false) {
-    try {
-      console.log(`Buscando detalhes da conversa ${conversaId} para o usuário: ${userId}`);
-      
-      // Verificar se já existe uma requisição em andamento para essa conversa
-      if (this.pendingFetches.has(conversaId)) {
-        console.log(`Já existe uma requisição em andamento para conversa ${conversaId}, aguardando...`);
-        try {
-          // Aguardar a requisição em andamento
-          return await this.pendingFetches.get(conversaId);
-        } catch (error) {
-          // Se a requisição em andamento falhar, continuar com uma nova
-          console.warn(`Requisição anterior para conversa ${conversaId} falhou, tentando novamente`);
-        }
-      }
-      
-      // Verificar cache
-      const cachedConversation = this.conversationCache.get(conversaId);
-      const now = Date.now();
-      
-      // Se tiver cache recente (menos de 10 segundos) e não forçar atualização, usar cache
-      if (cachedConversation && 
-          now - cachedConversation.timestamp < 10000 && 
-          !forceRefresh) {
-        console.log(`Usando cache recente para conversa ${conversaId}`);
-        return {
-          success: true,
-          data: cachedConversation.data
-        };
-      }
-      
-      // Criar uma promessa para esta requisição
-      const fetchPromise = new Promise(async (resolve, reject) => {
-        try {
-          // Buscar detalhes atualizados
-          const response = await this.api.get(API_ENDPOINTS.getConversa(userId, conversaId));
-          
-          // Se for bem-sucedido, atualizar todos os caches
-          if (response.data.success && response.data.data) {
-            const data = response.data.data;
-            
-            // Atualizar cache específico da conversa
-            this.conversationCache.set(conversaId, {
-              data,
-              timestamp: now
-            });
-            
-            const isFinalized = data.status && data.status.toLowerCase() === 'finalizada';
-            
-            if (isFinalized) {
-              // Atualizar no cache de conversas concluídas
-              const conversationIndex = this.completedConversasCache.findIndex(conv => conv._id === conversaId);
-              if (conversationIndex >= 0) {
-                this.completedConversasCache[conversationIndex] = data;
-              } else {
-                this.completedConversasCache.push(data);
-              }
-            } else {
-              // Atualizar no cache global de conversas ativas
-              const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
-              if (conversationIndex >= 0) {
-                this.allConversasCache[conversationIndex] = {
-                  ...data,
-                  unreadCount: 0, // Zerar contagem ao visualizar detalhes
-                  lastMessageRead: true
-                };
-              } else {
-                this.allConversasCache.push({
-                  ...data,
-                  unreadCount: 0,
-                  lastMessageRead: true
-                });
-              }
-            }
-          }
-          
-          console.log(`Detalhes da conversa obtidos com sucesso: ${conversaId}`);
-          resolve(response.data);
-        } catch (error) {
-          console.error(`Erro ao buscar detalhes da conversa ${conversaId}:`, error.message);
-          
-          // Tentar encontrar a conversa em algum cache
-          const cachedConversation = this.conversationCache.get(conversaId) || 
-                                    this.allConversasCache.find(conv => conv._id === conversaId) || 
-                                    this.completedConversasCache.find(conv => conv._id === conversaId);
-          
-          if (cachedConversation) {
-            console.log(`Usando conversa do cache como fallback para ${conversaId}`);
-            resolve({
-              success: true,
-              error: error.message,
-              data: cachedConversation.data || cachedConversation
-            });
-          } else {
-            reject(error);
-          }
-        } finally {
-          // Remover esta requisição das pendentes
-          this.pendingFetches.delete(conversaId);
-        }
+      const event = new CustomEvent('multiflow:permission-error', { 
+        detail: errorDetails 
       });
+      window.dispatchEvent(event);
+    }
+    
+    return errorDetails;
+  }
+
+  getUserId() {
+    let userId = localStorage.getItem('userId');
+    
+    if (!userId || userId === 'undefined' || userId === 'null') {
+      userId = this.ADMIN_ID;
+      localStorage.setItem('userId', userId);
+    }
+    
+    return userId;
+  }
+
+  isCacheValid(cacheItem, duration) {
+    return cacheItem && 
+           cacheItem.data && 
+           Date.now() - cacheItem.timestamp < duration;
+  }
+
+  updateCache(cacheKey, data) {
+    this.cache[cacheKey] = {
+      data,
+      timestamp: Date.now()
+    };
+  }
+
+  async getUsersAdmin(userId = this.ADMIN_ID) {
+    try {
+      if (this.isCacheValid(this.cache.users, this.cacheDuration.medium)) {
+        return {
+          success: true,
+          data: this.cache.users.data
+        };
+      }
+
+      const params = {
+        userId,
+        role: 'admin',
+        isAdmin: 'true'
+      };
       
-      // Registrar esta promessa como em andamento
-      this.pendingFetches.set(conversaId, fetchPromise);
+      const response = await this.get(`/admin/users`, { params });
       
-      return await fetchPromise;
+      if (response.success && Array.isArray(response.data)) {
+        this.updateCache('users', response.data);
+        return {
+          success: true,
+          data: response.data
+        };
+      }
+      
+      return response;
     } catch (error) {
-      console.error(`Erro ao buscar detalhes da conversa ${conversaId}:`, error.message);
+      if (this.cache.users.data) {
+        return {
+          success: true,
+          data: this.cache.users.data,
+          fromCache: true,
+          error: error.message
+        };
+      }
       
-      // Retornar erro
+      this.logError('getUsersAdmin', error, {userId});
+      return {
+        success: false,
+        error: error.message,
+        data: []
+      };
+    }
+  }
+
+  async getUserAdmin(userId, adminId = this.ADMIN_ID) {
+    try {
+      const cacheKey = `user-${userId}`;
+      const cachedUser = this.userDetailsCache.get(cacheKey);
+      
+      if (cachedUser && this.isCacheValid(cachedUser, this.cacheDuration.medium)) {
+        return {
+          success: true,
+          data: cachedUser.data
+        };
+      }
+
+      const params = {
+        userId: adminId,
+        role: 'admin',
+        isAdmin: 'true'
+      };
+      
+      const response = await this.get(`/admin/users/${userId}`, { params });
+      
+      if (response.success && response.data) {
+        this.userDetailsCache.set(cacheKey, {
+          data: response.data,
+          timestamp: Date.now()
+        });
+        
+        return {
+          success: true,
+          data: response.data
+        };
+      }
+      
+      return response;
+    } catch (error) {
+      const cacheKey = `user-${userId}`;
+      const cachedUser = this.userDetailsCache.get(cacheKey);
+      
+      if (cachedUser) {
+        return {
+          success: true,
+          data: cachedUser.data,
+          fromCache: true,
+          error: error.message
+        };
+      }
+      
+      this.logError('getUserAdmin', error, {userId, adminId});
       return {
         success: false,
         error: error.message,
@@ -553,364 +364,581 @@ class MultiflowApiService {
     }
   }
 
-  /**
-   * Marca todas as mensagens de uma conversa como lidas
-   */
-  async markConversationAsRead(conversaId, userId = this.getUserId()) {
+  async createUserAdmin(userData, adminId = this.ADMIN_ID) {
     try {
-      console.log(`Marcando todas as mensagens da conversa ${conversaId} como lidas`);
+      const params = {
+        userId: adminId,
+        role: 'admin',
+        isAdmin: 'true'
+      };
       
-      // Verificar se o endpoint está disponível
-      if (!API_ENDPOINTS.markRead) {
-        console.warn('Endpoint para marcar mensagens como lidas não configurado');
-        // Tentar implementação alternativa - apenas atualizar o cache
-        const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
-        if (conversationIndex >= 0) {
-          this.allConversasCache[conversationIndex].unreadCount = 0;
-          this.allConversasCache[conversationIndex].lastMessageRead = true;
-        }
-        
-        // Atualizar também o cache específico
-        if (this.conversationCache.has(conversaId)) {
-          const cachedData = this.conversationCache.get(conversaId);
-          cachedData.data.unreadCount = 0;
-          cachedData.data.lastMessageRead = true;
-          this.conversationCache.set(conversaId, {
-            ...cachedData,
-            timestamp: Date.now() // Atualizar timestamp
-          });
-        }
-        
-        return { success: true };
+      const response = await this.post(`/admin/users/register`, userData, { params });
+      
+      if (response.success) {
+        this.updateCache('users', null);
       }
       
-      const response = await this.api.post(API_ENDPOINTS.markRead(userId, conversaId));
-      
-      // Atualizar todos os caches
-      const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
-      if (conversationIndex >= 0) {
-        this.allConversasCache[conversationIndex].unreadCount = 0;
-        this.allConversasCache[conversationIndex].lastMessageRead = true;
-      }
-      
-      if (this.conversationCache.has(conversaId)) {
-        const cachedData = this.conversationCache.get(conversaId);
-        cachedData.data.unreadCount = 0;
-        cachedData.data.lastMessageRead = true;
-        this.conversationCache.set(conversaId, {
-          ...cachedData,
-          timestamp: Date.now() // Atualizar timestamp
-        });
-      }
-      
-      console.log('Mensagens marcadas como lidas com sucesso');
-      return response.data;
+      return response;
     } catch (error) {
-      console.error(`Erro ao marcar mensagens como lidas na conversa ${conversaId}:`, error.message);
-      
-      // Mesmo com erro, atualizar o cache local para melhorar UX
-      const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
-      if (conversationIndex >= 0) {
-        this.allConversasCache[conversationIndex].unreadCount = 0;
-        this.allConversasCache[conversationIndex].lastMessageRead = true;
-      }
-      
+      this.logError('createUserAdmin', error, {adminId});
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        data: null
       };
     }
   }
 
-  /**
-   * Marca uma mensagem específica como lida
-   */
-  async markMessageAsRead(conversaId, messageId, userId = this.getUserId()) {
+  async updateUserAdmin(userId, userData, adminId = this.ADMIN_ID) {
     try {
-      console.log(`Marcando mensagem ${messageId} da conversa ${conversaId} como lida`);
+      const params = {
+        userId: adminId,
+        role: 'admin',
+        isAdmin: 'true'
+      };
       
-      // Verificar se o endpoint está disponível
-      if (!API_ENDPOINTS.markMessageRead) {
-        console.warn('Endpoint para marcar mensagem como lida não configurado');
-        return { success: true };
+      const response = await this.put(`/admin/users/${userId}`, userData, { params });
+      
+      if (response.success) {
+        this.updateCache('users', null);
+        const cacheKey = `user-${userId}`;
+        this.userDetailsCache.delete(cacheKey);
       }
       
-      const response = await this.api.post(API_ENDPOINTS.markMessageRead(userId, conversaId, messageId));
-      
-      console.log('Mensagem marcada como lida com sucesso');
-      return response.data;
+      return response;
     } catch (error) {
-      console.error(`Erro ao marcar mensagem ${messageId} como lida:`, error.message);
-      
+      this.logError('updateUserAdmin', error, {userId, adminId});
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        data: null
       };
     }
   }
 
-  /**
-   * Envia uma mensagem em uma conversa
-   */
-  async enviarMensagem(conversaId, conteudo, userId = this.getUserId()) {
+  async updateUserStatusAdmin(userId, isActive, adminId = this.ADMIN_ID) {
     try {
-      console.log(`Enviando mensagem para conversa ${conversaId}`);
+      const params = {
+        userId: adminId,
+        role: 'admin',
+        isAdmin: 'true'
+      };
       
-      const response = await this.api.post(
-        API_ENDPOINTS.addMensagem(userId, conversaId),
-        { conteudo }
-      );
+      const response = await this.put(`/admin/users/${userId}/status`, { isActive }, { params });
       
-      // Atualizar todos os caches
-      const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
-      if (conversationIndex >= 0 && response.data.success && response.data.data) {
-        this.allConversasCache[conversationIndex] = {
-          ...this.allConversasCache[conversationIndex],
-          ...response.data.data,
-          lastMessageRead: true
+      if (response.success) {
+        this.updateCache('users', null);
+        const cacheKey = `user-${userId}`;
+        this.userDetailsCache.delete(cacheKey);
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('updateUserStatusAdmin', error, {userId, adminId});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  async deleteUser(userId, adminId = this.ADMIN_ID) {
+    try {
+      const params = {
+        userId: adminId,
+        role: 'admin',
+        isAdmin: 'true'
+      };
+      
+      const response = await this.delete(`/admin/users/${userId}`, { params });
+      
+      if (response.success) {
+        this.updateCache('users', null);
+        const cacheKey = `user-${userId}`;
+        this.userDetailsCache.delete(cacheKey);
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('deleteUser', error, {userId, adminId});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  async updateUserSector(userId, setorData, adminId = this.ADMIN_ID) {
+    try {
+      const params = {
+        userId: adminId,
+        role: 'admin',
+        isAdmin: 'true'
+      };
+      
+      const response = await this.put(`/admin/users/${userId}/setor`, setorData, { params });
+      
+      if (response.success) {
+        this.updateCache('users', null);
+        const cacheKey = `user-${userId}`;
+        this.userDetailsCache.delete(cacheKey);
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('updateUserSector', error, {userId, adminId});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  async updateUserSectors(userId, setoresData, adminId = this.ADMIN_ID) {
+    try {
+      const params = {
+        userId: adminId,
+        role: 'admin',
+        isAdmin: 'true'
+      };
+      
+      const payload = {
+        setores: setoresData,
+        setor: setoresData[0] || null
+      };
+      
+      const response = await this.put(`/admin/users/${userId}/setores`, payload, { params });
+      
+      if (response.success) {
+        this.updateCache('users', null);
+        const cacheKey = `user-${userId}`;
+        this.userDetailsCache.delete(cacheKey);
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('updateUserSectors', error, {userId, adminId});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  async getEmpresas(userId = this.ADMIN_ID, isAdmin = false) {
+    try {
+      if (this.isCacheValid(this.cache.empresas, this.cacheDuration.medium)) {
+        return {
+          success: true,
+          data: this.cache.empresas.data
         };
       }
       
-      // Atualizar cache específico se existir
-      if (this.conversationCache.has(conversaId) && response.data.success && response.data.data) {
-        const cachedData = this.conversationCache.get(conversaId);
-        // Verificar se temos a mensagem recém-adicionada
-        if (response.data.data.mensagens && cachedData.data.mensagens) {
-          // Manter todas as mensagens do cache e adicionar/atualizar as novas
-          const existingMessageIds = new Set(cachedData.data.mensagens.map(msg => msg._id));
-          const newMessages = response.data.data.mensagens.filter(msg => !existingMessageIds.has(msg._id));
-          
-          this.conversationCache.set(conversaId, {
-            data: {
-              ...cachedData.data,
-              ...response.data.data,
-              mensagens: [...cachedData.data.mensagens, ...newMessages],
-              lastMessageRead: true
-            },
-            timestamp: Date.now()
-          });
-        } else {
-          // Se não temos mensagens no cache ou na resposta, apenas atualizar o que temos
-          this.conversationCache.set(conversaId, {
-            data: {
-              ...cachedData.data,
-              ...response.data.data,
-              lastMessageRead: true
-            },
-            timestamp: Date.now()
-          });
-        }
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
       }
       
-      console.log('Mensagem enviada com sucesso');
-      return response.data;
+      const response = await this.get(`/users/${userId}/empresas`, { params });
+      
+      if (response.success) {
+        this.updateCache('empresas', response.data);
+      }
+      
+      return response;
     } catch (error) {
-      console.error(`Erro ao enviar mensagem para conversa ${conversaId}:`, error.message);
-      
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Atualiza o status de uma conversa
-   */
-  async updateStatus(conversaId, status, userId = this.getUserId()) {
-    try {
-      console.log(`Atualizando status da conversa ${conversaId} para: ${status}`);
-      
-      const response = await this.api.put(
-        API_ENDPOINTS.updateStatus(userId, conversaId),
-        { status }
-      );
-      
-      // Se estiver finalizando a conversa, mover para o cache de conversas concluídas
-      if (status.toLowerCase() === 'finalizada') {
-        const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
-        if (conversationIndex >= 0) {
-          const conversation = this.allConversasCache[conversationIndex];
-          this.completedConversasCache.push({
-            ...conversation,
-            status: 'finalizada'
-          });
-          // Remover da lista de conversas ativas
-          this.allConversasCache.splice(conversationIndex, 1);
-        }
-      } else {
-        // Atualizar a conversa no cache global
-        const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
-        if (conversationIndex >= 0) {
-          this.allConversasCache[conversationIndex].status = status;
-        }
-      }
-      
-      // Atualizar cache específico se existir
-      if (this.conversationCache.has(conversaId)) {
-        const cachedData = this.conversationCache.get(conversaId);
-        cachedData.data.status = status;
-        this.conversationCache.set(conversaId, {
-          ...cachedData,
-          timestamp: Date.now() // Atualizar timestamp
-        });
-      }
-      
-      console.log(`Status da conversa atualizado com sucesso: ${status}`);
-      return response.data;
-    } catch (error) {
-      console.error(`Erro ao atualizar status da conversa ${conversaId}:`, error.message);
-      
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Finaliza uma conversa
-   */
-  async finalizarConversa(conversaId, userId = this.getUserId()) {
-    try {
-      console.log(`Finalizando conversa ${conversaId} para usuário ${userId}`);
-      
-      const response = await this.api.put(
-        API_ENDPOINTS.finalizarConversa(userId, conversaId)
-      );
-      
-      // Mover a conversa do cache global para o cache de concluídas
-      const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
-      if (conversationIndex >= 0) {
-        const conversation = this.allConversasCache[conversationIndex];
-        // Adicionar ao cache de concluídas
-        this.completedConversasCache.push({
-          ...conversation,
-          status: 'finalizada'
-        });
-        // Remover da lista de conversas ativas
-        this.allConversasCache.splice(conversationIndex, 1);
-      }
-      
-      // Atualizar cache específico se existir
-      if (this.conversationCache.has(conversaId)) {
-        const cachedData = this.conversationCache.get(conversaId);
-        cachedData.data.status = 'finalizada';
-        this.conversationCache.set(conversaId, {
-          ...cachedData,
-          timestamp: Date.now() // Atualizar timestamp
-        });
-      }
-      
-      console.log(`Conversa finalizada com sucesso: ${conversaId}`);
-      return response.data;
-    } catch (error) {
-      console.error(`Erro ao finalizar conversa ${conversaId}:`, error.message);
-      
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Arquiva uma conversa
-   */
-  async arquivarConversa(conversaId, userId = this.getUserId()) {
-    try {
-      console.log(`Arquivando conversa ${conversaId} para usuário ${userId}`);
-      
-      const response = await this.api.put(
-        API_ENDPOINTS.arquivarConversa(userId, conversaId)
-      );
-      
-      // Remover a conversa dos caches
-      this.allConversasCache = this.allConversasCache.filter(conv => conv._id !== conversaId);
-      this.completedConversasCache = this.completedConversasCache.filter(conv => conv._id !== conversaId);
-      this.conversationCache.delete(conversaId);
-      
-      console.log(`Conversa arquivada com sucesso: ${conversaId}`);
-      return response.data;
-    } catch (error) {
-      console.error(`Erro ao arquivar conversa ${conversaId}:`, error.message);
-      
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Transfere uma conversa para outro setor
-   */
-  async transferirConversa(conversaId, setorId, userId = this.getUserId()) {
-    try {
-      console.log(`Transferindo conversa ${conversaId} para setor ${setorId}`);
-      
-      const response = await this.api.put(
-        API_ENDPOINTS.transferirConversa(userId, conversaId),
-        { setorId }
-      );
-      
-      // Atualizar todos os caches
-      const conversationIndex = this.allConversasCache.findIndex(conv => conv._id === conversaId);
-      if (conversationIndex >= 0 && response.data.success && response.data.data) {
-        this.allConversasCache[conversationIndex] = {
-          ...this.allConversasCache[conversationIndex],
-          setorId: setorId
+      if (this.cache.empresas.data) {
+        return {
+          success: true,
+          data: this.cache.empresas.data,
+          fromCache: true,
+          error: error.message
         };
       }
       
-      // Atualizar cache específico se existir
-      if (this.conversationCache.has(conversaId)) {
-        const cachedData = this.conversationCache.get(conversaId);
-        cachedData.data.setorId = setorId;
-        this.conversationCache.set(conversaId, {
-          ...cachedData,
-          timestamp: Date.now() // Atualizar timestamp
-        });
-      }
-      
-      console.log('Conversa transferida com sucesso');
-      return response.data;
-    } catch (error) {
-      console.error(`Erro ao transferir conversa ${conversaId}:`, error.message);
-      
+      this.logError('getEmpresas', error, {userId, isAdmin});
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        data: []
       };
     }
   }
 
-  /**
-   * Limpa o cache e força a atualização dos dados
-   */
-  resetCache() {
-    console.log('Limpando todo o cache da API');
-    this.cache = {};
-    this.setoresCache = null;
-    this.allConversasCache = [];
-    this.completedConversasCache = [];
-    this.conversationCache.clear();
-    this.lastConversasFetch = 0;
-    this.lastCompletedConversasFetch = 0;
+  async getEmpresaById(empresaId, userId = this.ADMIN_ID, isAdmin = false) {
+    try {
+      if (!empresaId) {
+        return {
+          success: false,
+          error: 'ID da empresa não fornecido'
+        };
+      }
+      
+      empresaId = this.normalizeId(empresaId, 'empresa');
+      
+      const cacheKey = `empresa-${empresaId}`;
+      
+      const cachedEmpresa = this.empresaDetailsCache.get(cacheKey);
+      if (cachedEmpresa && this.isCacheValid(cachedEmpresa, this.cacheDuration.medium)) {
+        return {
+          success: true,
+          data: cachedEmpresa.data
+        };
+      }
+      
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      const response = await this.get(`/users/${userId}/empresas/${empresaId}`, { params });
+      
+      if (response.success) {
+        this.empresaDetailsCache.set(cacheKey, {
+          data: response.data,
+          timestamp: Date.now()
+        });
+      }
+      
+      return response;
+    } catch (error) {
+      const cacheKey = `empresa-${empresaId}`;
+      const cachedEmpresa = this.empresaDetailsCache.get(cacheKey);
+      
+      if (cachedEmpresa) {
+        return {
+          success: true,
+          data: cachedEmpresa.data,
+          fromCache: true,
+          error: error.message
+        };
+      }
+      
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
   }
 
-  /**
-   * Verifica o status de saúde da API
-   */
-  async checkHealth() {
+  async createEmpresa(empresaData, userId = this.ADMIN_ID, isAdmin = false) {
     try {
-      // A documentação não menciona um endpoint de health, mas vamos tentar a rota base
-      const response = await this.api.get('/', { timeout: 5000 });
-      return response.status < 300;
+      const timestamp = Date.now();
+      const random = Math.floor(Math.random() * 1000);
+      
+      const empresaId = String(empresaData.empresaId || `EMP${timestamp}${random}`);
+      
+      const payload = {
+        empresaId: empresaId,
+        nome: empresaData.nome,
+        descricao: empresaData.descricao || `Empresa ${empresaData.nome}`,
+        contexto: empresaData.contexto || '',
+        horarioFuncionamento: empresaData.horarioFuncionamento || 'Segunda a Sexta, 9h às 18h',
+        ativo: empresaData.ativo !== false
+      };
+      
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      const url = `/users/${userId}/empresas`;
+      const response = await this.post(url, payload, { params });
+      
+      this.updateCache('empresas', null);
+      
+      return response;
     } catch (error) {
-      console.error('Erro ao verificar saúde da API:', error.message);
-      return false;
+      this.logError('createEmpresa', error, {userId, isAdmin});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
     }
+  }
+
+  async updateEmpresa(empresaId, empresaData, userId = this.ADMIN_ID, isAdmin = false) {
+    try {
+      const payload = {
+        nome: empresaData.nome,
+        descricao: empresaData.descricao,
+        contexto: empresaData.contexto || '',
+        horarioFuncionamento: empresaData.horarioFuncionamento || 'Segunda a Sexta, 9h às 18h',
+        ativo: empresaData.ativo !== false
+      };
+      
+      if (empresaData.empresaId) {
+        payload.empresaId = empresaData.empresaId;
+      }
+      
+      if (empresaData.position) {
+        payload.position = empresaData.position;
+      }
+      
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      const response = await this.put(`/users/${userId}/empresas/${empresaId}`, payload, { params });
+      
+      this.updateCache('empresas', null);
+      const cacheKey = `empresa-${empresaId}`;
+      this.empresaDetailsCache.delete(cacheKey);
+      
+      if (response.success) {
+        try {
+          const localConfig = JSON.parse(localStorage.getItem('localFlowConfig') || '{}');
+          if (localConfig.empresas) {
+            localConfig.empresas = localConfig.empresas.map(e => 
+              e.id === empresaId || e.empresaId === empresaId ? { ...e, ...payload, lastUpdated: Date.now() } : e
+            );
+            localConfig.lastUpdated = Date.now();
+            localStorage.setItem('localFlowConfig', JSON.stringify(localConfig));
+          }
+        } catch (e) {
+          console.error('Erro ao atualizar localStorage após modificação da empresa:', e);
+        }
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('updateEmpresa', error, {empresaId, userId, isAdmin});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  async deleteEmpresa(empresaId, userId = this.ADMIN_ID, isAdmin = false) {
+    try {
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      const response = await this.delete(`/users/${userId}/empresas/${empresaId}`, { params });
+      
+      this.updateCache('empresas', null);
+      this.updateCache('setores', null);
+      const cacheKey = `empresa-${empresaId}`;
+      this.empresaDetailsCache.delete(cacheKey);
+      
+      if (response.success) {
+        try {
+          const localConfig = JSON.parse(localStorage.getItem('localFlowConfig') || '{}');
+          if (localConfig.empresas) {
+            localConfig.empresas = localConfig.empresas.filter(e => e.id !== empresaId && e.empresaId !== empresaId);
+            localConfig.lastUpdated = Date.now();
+            localStorage.setItem('localFlowConfig', JSON.stringify(localConfig));
+          }
+        } catch (e) {
+          console.error('Erro ao atualizar localStorage após remoção da empresa:', e);
+        }
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('deleteEmpresa', error, {empresaId, userId, isAdmin});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  async getSetoresByEmpresa(empresaId, userId = this.ADMIN_ID, isAdmin = false) {
+    try {
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      const response = await this.get(`/users/${userId}/empresas/${empresaId}/setores`, { params });
+      return response;
+    } catch (error) {
+      this.logError('getSetoresByEmpresa', error, {empresaId, userId, isAdmin});
+      return {
+        success: false,
+        error: error.message,
+        data: []
+      };
+    }
+  }
+
+  async getSetores(userId = this.ADMIN_ID, isAdmin = false, allUsers = false) {
+    try {
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      if (allUsers) {
+        params.allUsers = 'true';
+      }
+      
+      if (!userId || userId === 'undefined' || userId === 'null') {
+        userId = this.ADMIN_ID;
+      }
+      
+      const response = await this.get(`/users/${userId}/setores`, { params });
+      
+      if (response.success) {
+        this.updateCache('setores', response.data);
+      }
+      
+      return response;
+    } catch (error) {
+      console.error('Erro ao buscar setores:', error);
+      
+      if (this.cache.setores.data) {
+        return {
+          success: true,
+          data: this.cache.setores.data,
+          fromCache: true,
+          error: error.message
+        };
+      }
+      
+      return {
+        success: false,
+        error: error.message,
+        data: []
+      };
+    }
+  }
+
+  normalizeId(id, type = 'generic') {
+    if (!id) return null;
+    
+    if (type === 'conversa') {
+      return this.getConversaId(id);
+    }
+    
+    if (type === 'setor') {
+      if (typeof id === 'object') {
+        if (id.setorId) return id.setorId.toString();
+        if (id._id) return id._id.toString();
+        if (id.id) return id.id.toString();
+        return null;
+      }
+      return id.toString();
+    }
+    
+    if (typeof id === 'object') {
+      const typeMap = {
+        'empresa': ['empresaId', '_id', 'id'],
+        'generic': ['id', '_id', 'setorId', 'empresaId', 'conversaId']
+      };
+      
+      const props = typeMap[type] || typeMap.generic;
+      
+      for (const prop of props) {
+        if (id[prop]) return id[prop].toString();
+      }
+      return null;
+    }
+    
+    return id.toString();
+  }
+
+  resetCache(specificCache = null) {
+    if (specificCache) {
+      if (specificCache === 'users') {
+        this.cache.users = { data: null, timestamp: 0 };
+        this.userDetailsCache.clear();
+        return;
+      }
+      
+      if (specificCache === 'setores' || specificCache === 'sectors') {
+        this.cache.setores = { data: null, timestamp: 0 };
+        this.setorDetailsCache = new LRUCache(20);
+        
+        try {
+          const localConfig = JSON.parse(localStorage.getItem('localFlowConfig') || '{}');
+          if (localConfig.sectors) {
+            localConfig.lastUpdated = 0;
+            localStorage.setItem('localFlowConfig', JSON.stringify(localConfig));
+          }
+        } catch (e) {
+          console.error('Erro ao atualizar timestamp no localStorage durante resetCache:', e);
+        }
+        return;
+      }
+      
+      if (specificCache === 'empresas') {
+        this.cache.empresas = { data: null, timestamp: 0 };
+        this.empresaDetailsCache = new LRUCache(20);
+        
+        try {
+          const localConfig = JSON.parse(localStorage.getItem('localFlowConfig') || '{}');
+          if (localConfig.empresas) {
+            localConfig.lastUpdated = 0;
+            localStorage.setItem('localFlowConfig', JSON.stringify(localConfig));
+          }
+        } catch (e) {
+          console.error('Erro ao atualizar timestamp no localStorage durante resetCache:', e);
+        }
+        return;
+      }
+      
+      if (this.cache[specificCache]) {
+        this.cache[specificCache] = { data: null, timestamp: 0 };
+      }
+      return;
+    }
+    
+    this.cache = {
+      empresas: { data: null, timestamp: 0 },
+      setores: { data: null, timestamp: 0 },
+      conversas: { data: [], timestamp: 0 },
+      conversasFinalizadas: { data: [], timestamp: 0 },
+      configIA: { data: null, timestamp: 0 },
+      flowConfig: { data: null, timestamp: 0 },
+      users: { data: null, timestamp: 0 }
+    };
+    
+    this.conversationDetailsCache = new LRUCache(50);
+    this.setorDetailsCache = new LRUCache(20);
+    this.empresaDetailsCache = new LRUCache(20);
+    this.userDetailsCache = new LRUCache(100);
+    
+    try {
+      const localConfig = JSON.parse(localStorage.getItem('localFlowConfig') || '{}');
+      localConfig.lastUpdated = 0;
+      localStorage.setItem('localFlowConfig', JSON.stringify(localConfig));
+    } catch (e) {
+      console.error('Erro ao atualizar timestamp no localStorage durante resetCache completo:', e);
+    }
+  }
+
+  getCacheStats() {
+    return {
+      conversationDetailsSize: this.conversationDetailsCache.getSize(),
+      setorDetailsSize: this.setorDetailsCache.getSize(),
+      empresaDetailsSize: this.empresaDetailsCache.getSize(),
+      userDetailsSize: this.userDetailsCache.getSize(),
+      conversasSize: this.cache.conversas.data?.length || 0,
+      conversasFinalizadasSize: this.cache.conversasFinalizadas.data?.length || 0,
+      usersSize: this.cache.users.data?.length || 0,
+      idMapSize: this.conversationIdMap.size,
+      reverseIdMapSize: this.reverseConversationIdMap.size
+    };
   }
 }
 

@@ -1,14 +1,19 @@
-// app-sidebar.jsx
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { 
-  MessageSquare, BarChart3, Bell, Settings, 
-  HelpCircle, LogOut, ChevronRight, User
+  MessageSquare, 
+  BarChart3, 
+  Settings, 
+  LogOut, 
+  User,
+  Shield, 
+  Users, 
+  Layers, 
+  Database
 } from 'lucide-react';
 import { useAuthContext } from '../hooks/useAuthContext';
 import { motion } from 'framer-motion';
 
-// Importar componentes do shadcn/ui
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import { Badge } from "../components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../components/ui/tooltip";
@@ -19,7 +24,6 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
   const location = useLocation();
   const [initials, setInitials] = useState('');
 
-  // Calcular iniciais do nome de usuário
   useEffect(() => {
     if (userProfile?.displayName) {
       const nameParts = userProfile.displayName.split(' ');
@@ -29,60 +33,60 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
     }
   }, [userProfile]);
 
-  // Navegação de menu
   const handleNavigation = (path) => {
     navigate(path);
     closeSidebar();
   };
 
-  // Definir itens do menu para usuários normais
+  // Itens de navegação para usuários regulares
   const regularUserItems = [
     { 
       id: 'conversations', 
       icon: <MessageSquare className="w-5 h-5" />, 
       label: 'Conversas', 
       path: '/conversations',
-      active: location.pathname.includes('/conversations')
+      active: location.pathname.includes('/conversations') && !location.pathname.includes('/admin/conversations')
     },
-    { 
-      id: 'analytics', 
-      icon: <BarChart3 className="w-5 h-5" />, 
-      label: 'Análise', 
-      path: '/analytics',
-      active: location.pathname === '/analytics'
-    },
-    { 
-      id: 'notifications', 
-      icon: <Bell className="w-5 h-5" />, 
-      label: 'Notificações', 
-      path: '/notifications',
-      active: location.pathname === '/notifications'
-    },
-    { 
-      id: 'settings', 
-      icon: <Settings className="w-5 h-5" />, 
-      label: 'Configurações', 
-      path: '/settings',
-      active: location.pathname === '/settings'
-    },
-    { 
-      id: 'help', 
-      icon: <HelpCircle className="w-5 h-5" />, 
-      label: 'Ajuda', 
-      path: '/help',
-      active: location.pathname === '/help'
-    }
+
+
   ];
 
-  // Itens administrativos adicionais
+  // Itens de navegação para administradores
   const adminItems = [
-    // Adicionar aqui itens administrativos se necessário
+    {
+      id: 'admin-conversations',
+      icon: <Database className="w-5 h-5" />,
+      label: 'Central de Conversas',
+      path: '/conversations',
+      active: location.pathname.includes('/admin/conversations')
+    },
+    {
+      id: 'admin-users',
+      icon: <Users className="w-5 h-5" />,
+      label: 'Gerenciar Usuários',
+      path: '/admin/users',
+      active: location.pathname === '/admin/users'
+    },
+    {
+      id: 'admin-orchestrator',
+      icon: <Layers className="w-5 h-5" />,
+      label: 'Fluxos e Setores',
+      path: '/admin/flow-orchestrator',
+      active: location.pathname === '/admin/flow-orchestrator'
+    },
+    {
+      id: 'admin-analytics',
+      icon: <BarChart3 className="w-5 h-5" />,
+      label: 'Analytics',
+      path: '/admin/analytics',
+      active: location.pathname === '/admin/analytics'
+    },
+
   ];
 
-  // Determinar quais itens de menu mostrar
-  const menuItems = isAdmin ? [...regularUserItems, ...adminItems] : regularUserItems;
+  // Escolher quais itens mostrar com base no status de admin
+  const menuItems = isAdmin ? adminItems : regularUserItems;
 
-  // Renderizar cada item do menu com ou sem tooltip baseado no estado de colapso
   const renderMenuItem = (item) => {
     const menuItemContent = (
       <li 
@@ -122,7 +126,6 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
       </li>
     );
 
-    // Se o menu estiver colapsado, usar tooltip
     if (collapsed) {
       return (
         <TooltipProvider key={item.id} delayDuration={150}>
@@ -138,7 +141,6 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
       );
     }
 
-    // Se não estiver colapsado, retornar o item sem tooltip
     return (
       <div key={item.id}>
         {menuItemContent}
@@ -148,11 +150,14 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
 
   return (
     <div className="h-full flex flex-col bg-[#070b11] border-r border-[#1f2937]/40 shadow-lg">
-      {/* Header */}
       <div className="p-4 border-b border-[#1f2937]/40">
         <div className="flex items-center gap-3">
           <div className="flex-shrink-0 bg-gradient-to-br from-[#10b981] to-[#059669] p-2 rounded-lg shadow-md">
-            <MessageSquare className="h-5 w-5 text-white" />
+            {isAdmin ? (
+              <Shield className="h-5 w-5 text-white" />
+            ) : (
+              <MessageSquare className="h-5 w-5 text-white" />
+            )}
           </div>
           {!collapsed && (
             <motion.h1 
@@ -160,16 +165,16 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
               animate={{ opacity: 1, x: 0 }}
               className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#10b981] to-[#059669]"
             >
-              MultiFlow
+              {isAdmin ? "Admin Panel" : "MultiFlow"}
             </motion.h1>
           )}
         </div>
       </div>
 
-      {/* User Profile */}
       <div 
         className={`mt-4 mx-3 p-3 rounded-lg transition-all duration-300 ${collapsed ? "justify-center" : ""} 
         flex items-center gap-3 bg-[#0f1621] border border-[#1f2937]/40 hover:bg-[#101820] cursor-pointer`}
+        onClick={() => handleNavigation('/profile')}
       >
         <Avatar className="border-2 border-[#10b981]/30 h-10 w-10 shadow-md">
           <AvatarImage src={userProfile?.photoURL} />
@@ -184,10 +189,16 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
               {userProfile?.displayName || 'Usuário'}
             </p>
             <div className="flex flex-wrap items-center gap-2 mt-1">
-              <Badge variant="success" className="px-2 py-0.5 text-xs">
-                Atendente
-              </Badge>
-              {userProfile?.sector && (
+              {isAdmin ? (
+                <Badge variant="outline" className="px-2 py-0.5 text-xs bg-purple-500/20 text-purple-300 border-purple-500/30">
+                  Administrador
+                </Badge>
+              ) : (
+                <Badge variant="success" className="px-2 py-0.5 text-xs">
+                  Atendente
+                </Badge>
+              )}
+              {userProfile?.sector && !isAdmin && (
                 <span className="inline-block px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded-md text-xs">
                   {userProfile.sector}
                 </span>
@@ -197,14 +208,20 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
         )}
       </div>
 
-      {/* Menu Items */}
       <nav className="mt-5 flex-1 px-3">
+        {isAdmin && !collapsed && (
+          <div className="mb-3">
+            <h2 className="text-xs font-semibold text-purple-400 uppercase tracking-wider ml-2">
+              Administração
+            </h2>
+          </div>
+        )}
+        
         <ul className="space-y-1">
           {menuItems.map(item => renderMenuItem(item))}
         </ul>
       </nav>
 
-      {/* Logout */}
       <div className="mt-auto mb-4 px-3">
         <button
           onClick={logout}

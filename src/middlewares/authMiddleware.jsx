@@ -2,14 +2,12 @@ import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthContext } from '../hooks/useAuthContext';
 
-// Componente de tela de carregamento
 const LoadingScreen = () => (
   <div className="flex items-center justify-center min-h-screen bg-[#0c0b14]">
     <div className="animate-spin w-8 h-8 border-4 border-t-transparent border-green-500 rounded-full"></div>
   </div>
 );
 
-// Middleware para rotas protegidas (requer autenticação)
 export const RequireAuth = ({ children }) => {
   const { user, authIsReady } = useAuthContext();
   const location = useLocation();
@@ -19,16 +17,26 @@ export const RequireAuth = ({ children }) => {
   }
   
   if (!user) {
+    // Verificar se já estamos na página de login para evitar loops de redirecionamento
+    if (location.pathname === '/login') {
+      return null; // Não redirecionar se já estamos na página de login
+    }
+    
     // Redirecionar para login, preservando a localização de onde veio
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+  
+  // Verificar se estamos em uma rota de autenticação enquanto já estamos autenticados
+  if (location.pathname === '/login' || location.pathname === '/signup') {
+    // Redirecionar para a página principal se já estiver autenticado
+    return <Navigate to="/" replace />;
   }
   
   return children;
 };
 
-// Middleware para rotas de admin (requer autenticação e papel de admin)
 export const RequireAdmin = ({ children }) => {
-  const { user, userProfile, authIsReady } = useAuthContext();
+  const { user, userProfile, isAdmin, authIsReady } = useAuthContext();
   const location = useLocation();
   
   if (!authIsReady) {
@@ -39,9 +47,11 @@ export const RequireAdmin = ({ children }) => {
     // Redirecionar para login, preservando a localização de onde veio
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
-  
+
   // Verificar se o usuário tem papel de admin
-  if (userProfile?.role !== 'admin') {
+  if (!isAdmin) {
+    console.warn("Acesso não autorizado. Perfil:", userProfile);
+    
     // Redirecionar para página não autorizada
     return <Navigate to="/unauthorized" replace />;
   }
@@ -49,9 +59,8 @@ export const RequireAdmin = ({ children }) => {
   return children;
 };
 
-// Middleware para rotas de setor (requer autenticação e setor específico)
 export const RequireSector = ({ children, sectorId }) => {
-  const { user, userProfile, authIsReady } = useAuthContext();
+  const { user, userProfile, isAdmin, authIsReady } = useAuthContext();
   const location = useLocation();
   
   if (!authIsReady) {
@@ -63,7 +72,7 @@ export const RequireSector = ({ children, sectorId }) => {
   }
   
   // Administradores têm acesso a todos os setores
-  if (userProfile?.role === 'admin') {
+  if (isAdmin) {
     return children;
   }
   

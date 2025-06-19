@@ -1,32 +1,46 @@
-// src/pages/Conversations/ConversationsPage.jsx
-import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   MessageSquare, 
-  MessageSquareOff, 
-  ArrowLeft,
   X,
   Check,
-  Share
+  Share,
+  Bell,
+  BellOff,
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
 
-// Contexts e Hooks
 import { useSocket } from '../../contexts/SocketContext';
 import { useAuthContext } from '../../hooks/useAuthContext';
 import { useMessageEffect } from '../../hooks/chat/useMessageEffect';
-
-// Components
-import ConversationsList from '../../components/conversations/ConversationsList';
-import ConversationDetail from '../../components/conversations/ConversationDetail';
-import { Button } from '../../components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { notificationService } from '../../services/notificationService';
+import { cn } from "@/lib/utils";
+import { useWindowSize } from '../../hooks/useWindowSize';
+
+import { Button } from "@/components/ui/button";
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogDescription, 
+  DialogFooter 
+} from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
+
+import ConversationsList from '../../components/conversations/ConversationsList';
+import ConversationDetailView from '../../components/conversations/ConversationDetailView';
+
+const STATUS = {
+  AGUARDANDO: 'aguardando',
+  EM_ANDAMENTO: 'em_andamento',
+  FINALIZADA: 'finalizada',
+  ARQUIVADA: 'arquivada'
+};
 
 const ConversationsPage = () => {
-  const { conversationId } = useParams();
-  const navigate = useNavigate();
-  const { userProfile, userSector, userSectorName, sectors } = useAuthContext();
+  const { userProfile, userSetor, sectors } = useAuthContext();
   const { 
     conversations, 
     completedConversations,
@@ -42,87 +56,96 @@ const ConversationsPage = () => {
     hasUnreadMessages,
     clearUnreadMessages,
     isLoading,
+    typingUsers,
     sendTypingIndicator
   } = useSocket();
 
   const { notificationsEnabled, toggleNotifications } = useMessageEffect();
+  const { width } = useWindowSize();
+  const isMobile = width < 768;
+  const isUpdatingRef = useRef(false);
   
-  // Estado da interface
+  // Estado para filtros (adicionado do admin)
+  const [filters, setFilters] = useState({
+    arquivada: false,
+    sectorFilter: 'all',
+    searchTerm: ''
+  });
+  
   const [activeTab, setActiveTab] = useState('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isMobileDetailView, setIsMobileDetailView] = useState(false);
   const [loadingError, setLoadingError] = useState(null);
+  const [mobileView, setMobileView] = useState('list');
   
-  // Estados para diálogos
   const [showTransferDialog, setShowTransferDialog] = useState(false);
   const [showFinishDialog, setShowFinishDialog] = useState(false);
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
   const [selectedSector, setSelectedSector] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
   
-  // Detectar tamanho da tela para responsividade
-  useEffect(() => {
-    const handleResize = () => {
-      const isMobile = window.innerWidth < 768;
-      setIsMobileDetailView(isMobile && !!selectedConversation);
-    };
-    
-    // Verificar inicialmente
-    handleResize();
-    
-    // Adicionar listener para redimensionamento
-    window.addEventListener('resize', handleResize);
-    
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [selectedConversation]);
+  // Handler para alteração de filtros
+  const handleFilterChange = useCallback((name, value) => {
+    setFilters(prev => ({ ...prev, [name]: value }));
+  }, []);
   
-  // Limpar flag de mensagens não lidas quando a página é visualizada
   useEffect(() => {
     if (hasUnreadMessages) {
       clearUnreadMessages();
     }
   }, [hasUnreadMessages, clearUnreadMessages]);
   
-  // Carregar conversas iniciais
+  // Efeito para carregar conversas com filtros
   useEffect(() => {
     const loadConversations = async () => {
+      if (isUpdatingRef.current) return;
+      
       setIsRefreshing(true);
       setLoadingError(null);
+      isUpdatingRef.current = true;
       
       try {
-        // Não usar nenhum filtro adicional, mostrar todas as conversas
-        await refreshConversations({});
+        // Aplicar filtros na chamada de API
+        const apiFilters = {
+          status: activeTab === 'finalizada' 
+            ? 'finalizada' 
+            : activeTab === 'aguardando'
+              ? 'aguardando'
+              : activeTab === 'em_andamento'
+                ? 'em_andamento'
+                : undefined,
+          search: filters.searchTerm || undefined,
+          setor: filters.sectorFilter !== 'all' ? filters.sectorFilter : undefined,
+          arquivada: filters.arquivada
+        };
+        
+        await refreshConversations(apiFilters);
       } catch (error) {
         console.error('Erro ao carregar conversas:', error);
         setLoadingError('Não foi possível carregar as conversas. Tente novamente.');
       } finally {
         setIsRefreshing(false);
+        setTimeout(() => {
+          isUpdatingRef.current = false;
+        }, 500);
       }
     };
     
-    // Carregar apenas na montagem do componente
     loadConversations();
-  }, [refreshConversations]);
-
-  // Carregar conversa específica quando a URL for acessada diretamente com ID
-  useEffect(() => {
-    if (conversationId && !selectedConversation) {
-      selectConversation(conversationId);
-    }
-  }, [conversationId, selectedConversation, selectConversation]);
-
-  // Carregar conversas concluídas ao selecionar a aba
+  }, [refreshConversations, activeTab, filters.sectorFilter, filters.searchTerm]); // Dependências adicionadas
+  
   useEffect(() => {
     const loadCompletedConversations = async () => {
-      if (activeTab === 'completed' && (!completedConversations || completedConversations.length === 0)) {
+      if (activeTab === 'completed' && (!completedConversations || completedConversations.length === 0) && !isUpdatingRef.current) {
         setIsRefreshing(true);
+        isUpdatingRef.current = true;
+        
         try {
           await refreshCompletedConversations();
         } catch (error) {
           console.error('Erro ao carregar conversas concluídas:', error);
         } finally {
           setIsRefreshing(false);
+          isUpdatingRef.current = false;
         }
       }
     };
@@ -130,16 +153,37 @@ const ConversationsPage = () => {
     loadCompletedConversations();
   }, [activeTab, completedConversations, refreshCompletedConversations]);
   
-  // Forçar atualização manual
+  useEffect(() => {
+    if (!selectedConversation && mobileView === 'detail') {
+      setMobileView('list');
+    }
+  }, [selectedConversation, mobileView]);
+  
   const handleRefresh = useCallback(async () => {
-    if (isRefreshing) return;
+    if (isRefreshing || isUpdatingRef.current) return;
     
     setIsRefreshing(true);
+    isUpdatingRef.current = true;
+    
     try {
+      // Incluir filtros na atualização
+      const apiFilters = {
+        status: activeTab === 'finalizada' 
+          ? 'finalizada' 
+          : activeTab === 'aguardando'
+            ? 'aguardando'
+            : activeTab === 'em_andamento'
+              ? 'em_andamento'
+              : undefined,
+        search: filters.searchTerm || undefined,
+        setor: filters.sectorFilter !== 'all' ? filters.sectorFilter : undefined,
+        arquivada: filters.arquivada
+      };
+      
       if (activeTab === 'completed') {
-        await refreshCompletedConversations();
+        await refreshCompletedConversations(apiFilters);
       } else {
-        await refreshConversations({});
+        await refreshConversations(apiFilters);
       }
       
       notificationService.showToast('Conversas atualizadas', 'success');
@@ -148,52 +192,67 @@ const ConversationsPage = () => {
       notificationService.showToast('Erro ao atualizar conversas', 'error');
     } finally {
       setIsRefreshing(false);
+      isUpdatingRef.current = false;
     }
-  }, [activeTab, refreshCompletedConversations, refreshConversations, isRefreshing]);
+  }, [activeTab, refreshCompletedConversations, refreshConversations, filters, isRefreshing]);
   
-  // Navegação para a conversa selecionada
-  const handleSelectConversation = (conversationId) => {
+  const handleSelectConversation = useCallback((conversationId) => {
+    if (selectedConversation && selectedConversation._id === conversationId) {
+      if (isMobile && mobileView !== 'detail') {
+        setMobileView('detail');
+      }
+      return;
+    }
+    
     selectConversation(conversationId);
-    navigate(`/conversations/${conversationId}`);
     
-    // Em dispositivos móveis, mostrar a visualização de detalhes
-    if (window.innerWidth < 768) {
-      setIsMobileDetailView(true);
+    if (isMobile) {
+      setMobileView('detail');
     }
-  };
+  }, [selectConversation, isMobile, selectedConversation, mobileView]);
   
-  // Voltar da visualização de detalhes em dispositivos móveis
-  const handleBackFromDetails = () => {
-    if (window.innerWidth < 768) {
-      setIsMobileDetailView(false);
-      navigate('/conversations');
+  const handleBackToList = useCallback(() => {
+    setMobileView('list');
+  }, []);
+  
+  const handleSendMessage = useCallback(async (conversationId, text) => {
+    if (!text.trim() || !conversationId) return;
+    
+    try {
+      return await sendMessage(conversationId, text);
+    } catch (error) {
+      console.error('Erro ao enviar mensagem:', error);
+      throw error;
     }
-  };
+  }, [sendMessage]);
   
-  // Lidar com envio de mensagem
-  const handleSendMessage = async (conversationId, text) => {
-    return await sendMessage(conversationId, text);
-  };
-  
-  // Mostrar diálogo de transferência
-  const handleShowTransferDialog = (conversationId) => {
+  const handleShowTransferDialog = useCallback(() => {
     setShowTransferDialog(true);
-  };
+  }, []);
   
-  // Mostrar diálogo de finalização
-  const handleShowFinishDialog = (conversationId) => {
+  const handleShowFinishDialog = useCallback(() => {
     setShowFinishDialog(true);
-  };
+  }, []);
   
-  // Mostrar diálogo de arquivamento
-  const handleShowArchiveDialog = (conversationId) => {
+  const handleShowArchiveDialog = useCallback(() => {
     setShowArchiveDialog(true);
-  };
+  }, []);
   
-  // Executar transferência
-  const handleConfirmTransfer = async () => {
-    if (!selectedConversation || !selectedSector) return;
+  const handleTypingIndicator = useCallback((conversationId) => {
+    if (conversationId && !isUpdatingRef.current) {
+      isUpdatingRef.current = true;
+      sendTypingIndicator(conversationId);
+      
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+      }, 1000);
+    }
+  }, [sendTypingIndicator]);
+  
+  const handleConfirmTransfer = useCallback(async () => {
+    if (!selectedConversation || !selectedSector || isProcessing) return;
     
+    setIsProcessing(true);
     try {
       const success = await transferConversation(selectedConversation._id, selectedSector);
       
@@ -201,137 +260,165 @@ const ConversationsPage = () => {
         notificationService.showToast('Conversa transferida com sucesso', 'success');
         setSelectedSector(null);
         setShowTransferDialog(false);
-        // Voltar à lista em dispositivos móveis
-        if (window.innerWidth < 768) {
-          setIsMobileDetailView(false);
-          navigate('/conversations');
-        }
+        
+        // Atualizar com filtros
+        const apiFilters = {
+          status: activeTab === 'finalizada' 
+            ? 'finalizada' 
+            : activeTab === 'aguardando'
+              ? 'aguardando'
+              : activeTab === 'em_andamento'
+                ? 'em_andamento'
+                : undefined,
+          search: filters.searchTerm || undefined,
+          setor: filters.sectorFilter !== 'all' ? filters.sectorFilter : undefined,
+          arquivada: filters.arquivada
+        };
+        
+        await refreshConversations(apiFilters);
       } else {
-        notificationService.showToast('Erro ao transferir conversa', 'error');
+        notificationService.showToast('Erro ao transferir conversa. Verifique sua conexão e tente novamente.', 'error');
       }
     } catch (error) {
       console.error('Erro ao transferir conversa:', error);
-      notificationService.showToast('Erro ao transferir conversa', 'error');
+      notificationService.showToast('Erro ao transferir conversa: ' + (error.message || 'Erro desconhecido'), 'error');
+    } finally {
+      setIsProcessing(false);
     }
-  };
+  }, [selectedConversation, selectedSector, isProcessing, transferConversation, refreshConversations, activeTab, filters]);
   
-  // Executar finalização
-  const handleConfirmFinish = async () => {
-    if (!selectedConversation) return;
+  const handleConfirmFinish = useCallback(async () => {
+    if (!selectedConversation || isProcessing) return;
     
+    setIsProcessing(true);
     try {
       const success = await finishConversation(selectedConversation._id);
       
       if (success) {
         notificationService.showToast('Conversa finalizada com sucesso', 'success');
         setShowFinishDialog(false);
-        // Voltar à lista em dispositivos móveis
-        if (window.innerWidth < 768) {
-          setIsMobileDetailView(false);
-          navigate('/conversations');
-        }
+        
+        // Atualizar com filtros
+        const apiFilters = {
+          search: filters.searchTerm || undefined,
+          setor: filters.sectorFilter !== 'all' ? filters.sectorFilter : undefined,
+          arquivada: filters.arquivada
+        };
+        
+        await refreshConversations(apiFilters);
+        await refreshCompletedConversations(apiFilters);
       } else {
-        notificationService.showToast('Erro ao finalizar conversa', 'error');
+        notificationService.showToast('Erro ao finalizar conversa. Verifique sua conexão e tente novamente.', 'error');
       }
     } catch (error) {
       console.error('Erro ao finalizar conversa:', error);
-      notificationService.showToast('Erro ao finalizar conversa', 'error');
+      notificationService.showToast('Erro ao finalizar conversa: ' + (error.message || 'Erro desconhecido'), 'error');
+    } finally {
+      setIsProcessing(false);
     }
-  };
+  }, [selectedConversation, isProcessing, finishConversation, refreshConversations, refreshCompletedConversations, filters]);
   
-  // Executar arquivamento
-  const handleConfirmArchive = async () => {
-    if (!selectedConversation) return;
+  const handleConfirmArchive = useCallback(async () => {
+    if (!selectedConversation || isProcessing) return;
     
+    setIsProcessing(true);
     try {
       const success = await archiveConversation(selectedConversation._id);
       
       if (success) {
         notificationService.showToast('Conversa arquivada com sucesso', 'success');
         setShowArchiveDialog(false);
-        // Voltar à lista em dispositivos móveis
-        if (window.innerWidth < 768) {
-          setIsMobileDetailView(false);
-          navigate('/conversations');
-        }
+        
+        // Atualizar com filtros
+        const apiFilters = {
+          search: filters.searchTerm || undefined,
+          setor: filters.sectorFilter !== 'all' ? filters.sectorFilter : undefined,
+          arquivada: filters.arquivada
+        };
+        
+        await refreshConversations(apiFilters);
+        await refreshCompletedConversations(apiFilters);
       } else {
-        notificationService.showToast('Erro ao arquivar conversa', 'error');
+        notificationService.showToast('Erro ao arquivar conversa. Verifique sua conexão e tente novamente.', 'error');
       }
     } catch (error) {
       console.error('Erro ao arquivar conversa:', error);
-      notificationService.showToast('Erro ao arquivar conversa', 'error');
+      notificationService.showToast('Erro ao arquivar conversa: ' + (error.message || 'Erro desconhecido'), 'error');
+    } finally {
+      setIsProcessing(false);
     }
-  };
+  }, [selectedConversation, isProcessing, archiveConversation, refreshConversations, refreshCompletedConversations, filters]);
   
-  // Processar ações do menu
-  const handleConversationAction = (action) => {
-    if (!selectedConversation) return;
-    
-    switch (action) {
-      case 'transferir':
-        handleShowTransferDialog(selectedConversation._id);
-        break;
-      case 'finalizar':
-        handleShowFinishDialog(selectedConversation._id);
-        break;
-      case 'arquivar':
-        handleShowArchiveDialog(selectedConversation._id);
-        break;
-      case 'videoCall':
-        notificationService.showToast('Chamada de vídeo não implementada', 'info');
-        break;
-      case 'voiceCall':
-        notificationService.showToast('Chamada de voz não implementada', 'info');
-        break;
-      default:
-        break;
-    }
-  };
-  
-  // Alternar notificações
-  const handleToggleNotifications = () => {
+  const handleToggleNotifications = useCallback(() => {
     toggleNotifications(!notificationsEnabled);
     
     notificationService.showToast(
       notificationsEnabled ? 'Notificações desativadas' : 'Notificações ativadas',
       'info'
     );
-  };
+  }, [notificationsEnabled, toggleNotifications]);
   
-  // Selecionar quais conversas mostrar com base na aba atual
-  const getActiveConversations = () => {
-    if (activeTab === 'completed') {
+  const getActiveConversations = useCallback(() => {
+    if (activeTab === 'finalizada') {
       return completedConversations || [];
     }
     
     if (!conversations) return [];
     
-    if (activeTab === 'waiting') {
+    if (activeTab === 'aguardando') {
       return conversations.filter(c => 
-        c.status && c.status.toLowerCase().includes('aguardando')
+        c.status && c.status.toLowerCase() === STATUS.AGUARDANDO
       );
     }
     
-    if (activeTab === 'ongoing') {
+    if (activeTab === 'em_andamento') {
       return conversations.filter(c => 
-        c.status && c.status.toLowerCase().includes('andamento')
+        c.status && c.status.toLowerCase() === STATUS.EM_ANDAMENTO
       );
     }
     
-    // Aba "all" - mostrar todas as conversas ativas
     return conversations;
-  };
+  }, [activeTab, conversations, completedConversations]);
+  
+  const transferDialogContent = useCallback(() => (
+    <RadioGroup value={selectedSector} onValueChange={setSelectedSector}>
+      <div className="space-y-3 max-h-[300px] overflow-auto">
+        {sectors && sectors.map(sector => (
+          <div key={sector._id || sector.id} className="flex items-start space-x-2">
+            <RadioGroupItem 
+              value={sector._id || sector.id} 
+              id={`sector-${sector._id || sector.id}`}
+              className="mt-1 text-[#10b981] border-[#1f2937]/40"
+            />
+            <Label 
+              htmlFor={`sector-${sector._id || sector.id}`}
+              className="flex-1 cursor-pointer text-white"
+            >
+              <div className="font-medium">{sector.nome}</div>
+              {sector.responsavel && (
+                <div className="text-sm text-slate-400">
+                  Responsável: {sector.responsavel}
+                </div>
+              )}
+            </Label>
+          </div>
+        ))}
+      </div>
+    </RadioGroup>
+  ), [sectors, selectedSector]);
 
   return (
-    <div className="h-full w-full flex flex-col">
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-        {/* Área de lista de conversas */}
-        {(!isMobileDetailView || !selectedConversation) && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="md:w-1/3 flex-shrink-0 p-4 md:border-r border-gray-800 overflow-auto h-full"
-          >
+    <div className="h-full w-full flex flex-col bg-[#070b11] relative">
+      <div className="absolute inset-0 pointer-events-none opacity-5">
+        <div className="absolute inset-0 bg-[url('https://flowbite.s3.amazonaws.com/blocks/marketing-ui/hero/grid-pattern-dark.svg')] bg-repeat"></div>
+      </div>
+      
+      <div className="flex-1 w-full h-full overflow-hidden relative z-10">
+        <div className="h-full flex flex-col md:flex-row">
+          <div className={cn(
+            "h-full md:w-1/3 md:border-r border-[#1f2937]/40",
+            isMobile && mobileView === 'detail' ? "hidden" : "flex-1"
+          )}>
             <ConversationsList 
               conversations={getActiveConversations()}
               onSelectConversation={handleSelectConversation}
@@ -339,185 +426,158 @@ const ConversationsPage = () => {
               error={loadingError}
               onRefresh={handleRefresh}
               sectors={sectors}
-              userSector={userSector}
+              userSector={userSetor}
               selectedConversationId={selectedConversation?._id}
               showNotifications={notificationsEnabled}
               onToggleNotifications={handleToggleNotifications}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              filters={filters}
+              onFilterChange={handleFilterChange}
+              onSearchChange={(term) => handleFilterChange('searchTerm', term)}
             />
-          </motion.div>
-        )}
-        
-        {/* Área de detalhes da conversa */}
-        {(selectedConversation || isMobileDetailView) && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex-1 p-4 h-full overflow-hidden"
-          >
-            {isMobileDetailView && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="md:hidden mb-4 bg-gray-800 border-gray-700 hover:bg-gray-700 text-gray-300"
-                onClick={handleBackFromDetails}
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Voltar às conversas
-              </Button>
-            )}
-            
-            <ConversationDetail 
-              conversation={selectedConversation}
-              onBack={handleBackFromDetails}
-              onSendMessage={handleSendMessage}
-              onFinish={handleShowFinishDialog}
-              onTransfer={handleShowTransferDialog}
-              onArchive={handleShowArchiveDialog}
-              onVideoCall={() => handleConversationAction('videoCall')}
-              onVoiceCall={() => handleConversationAction('voiceCall')}
-            />
-          </motion.div>
-        )}
-        
-        {/* Área de espaço reservado quando nenhuma conversa está selecionada */}
-        {!selectedConversation && !isMobileDetailView && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="hidden md:flex flex-1 items-center justify-center p-4"
-          >
-            <div className="text-center">
-              <div className="w-20 h-20 mx-auto mb-4 bg-gray-800/50 rounded-full flex items-center justify-center">
-                <MessageSquareOff className="h-10 w-10 text-gray-500" />
+          </div>
+          
+          <div className={cn(
+            "h-full md:w-2/3", 
+            isMobile && mobileView === 'list' ? "hidden" : "flex-1"
+          )}>
+            {selectedConversation ? (
+              <ConversationDetailView 
+                conversation={selectedConversation}
+                isConnected={isConnected}
+                isProcessing={isProcessing}
+                typingUsers={typingUsers}
+                onSendMessage={handleSendMessage}
+                onTypingIndicator={handleTypingIndicator}
+                onShowFinishModal={handleShowFinishDialog}
+                onShowTransferModal={handleShowTransferDialog}
+                onShowArchiveModal={handleShowArchiveDialog}
+                onBack={isMobile ? handleBackToList : undefined}
+              />
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center text-center p-6 bg-[#070b11]">
+                <div className="w-16 h-16 rounded-full bg-[#101820] flex items-center justify-center mb-4">
+                  <MessageSquare className="h-8 w-8 text-slate-400" />
+                </div>
+                <h3 className="text-xl text-white font-medium mb-2">Selecione uma conversa</h3>
+                <p className="text-slate-400 max-w-md">
+                  Escolha uma conversa da lista para visualizar as mensagens e interagir com o cliente.
+                </p>
               </div>
-              <h2 className="text-xl font-semibold text-white mb-2">Nenhuma conversa selecionada</h2>
-              <p className="text-gray-400 max-w-md">
-                Selecione uma conversa na lista para visualizar as mensagens e interagir com o cliente.
-              </p>
-            </div>
-          </motion.div>
-        )}
+            )}
+          </div>
+        </div>
       </div>
       
-      {/* Diálogo de transferência */}
+      {/* Diálogos de ação */}
       <Dialog open={showTransferDialog} onOpenChange={setShowTransferDialog}>
-        <DialogContent className="bg-gray-800 text-white border-gray-700">
+        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
           <DialogHeader>
             <DialogTitle>Transferir conversa</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Selecione o setor para o qual deseja transferir esta conversa
+            </DialogDescription>
           </DialogHeader>
           
           <div className="py-4">
-            <p className="text-gray-300 mb-4">
-              Selecione o setor para o qual deseja transferir esta conversa:
-            </p>
-            
-            <div className="grid grid-cols-1 gap-2 max-h-[300px] overflow-auto">
-              {sectors && sectors.map(sector => (
-                <button
-                  key={sector._id || sector.id}
-                  className={`p-3 rounded-lg border text-left transition-colors
-                    ${selectedSector === (sector._id || sector.id)
-                      ? 'bg-[#10b981]/20 border-[#10b981] text-white'
-                      : 'bg-gray-700/30 border-gray-700 text-gray-300 hover:bg-gray-700/50'
-                    }
-                  `}
-                  onClick={() => setSelectedSector(sector._id || sector.id)}
-                >
-                  <div className="font-medium">{sector.nome}</div>
-                  {sector.responsavel && (
-                    <div className="text-sm text-gray-400">
-                      Responsável: {sector.responsavel}
-                    </div>
-                  )}
-                </button>
-              ))}
-            </div>
+            {transferDialogContent()}
           </div>
           
           <DialogFooter>
             <Button 
               variant="outline"
               onClick={() => setShowTransferDialog(false)}
-              className="bg-transparent border-gray-600 text-gray-300 hover:bg-gray-700"
+              className="bg-[#101820] border-[#1f2937]/40 text-slate-300 hover:bg-[#101820] hover:text-white"
+              disabled={isProcessing}
             >
               <X className="h-4 w-4 mr-2" />
               Cancelar
             </Button>
             <Button 
               onClick={handleConfirmTransfer}
-              disabled={!selectedSector}
-              className="bg-[#10b981] hover:bg-[#0d8e6a] text-white"
+              disabled={!selectedSector || isProcessing}
+              className="bg-gradient-to-br from-[#10b981] to-[#059669] text-white hover:opacity-90"
             >
-              <Share className="h-4 w-4 mr-2" />
-              Transferir
+              {isProcessing ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Share className="h-4 w-4 mr-2" />
+              )}
+              {isProcessing ? 'Transferindo...' : 'Transferir'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
       
-      {/* Diálogo de finalização */}
       <Dialog open={showFinishDialog} onOpenChange={setShowFinishDialog}>
-        <DialogContent className="bg-gray-800 text-white border-gray-700">
+        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
           <DialogHeader>
             <DialogTitle>Finalizar conversa</DialogTitle>
-          </DialogHeader>
-          
-          <div className="py-4">
-            <p className="text-gray-300">
+            <DialogDescription className="text-slate-400">
               Tem certeza que deseja finalizar esta conversa?
               A conversa será movida para a lista de conversas concluídas.
-            </p>
-          </div>
+            </DialogDescription>
+          </DialogHeader>
           
           <DialogFooter>
             <Button 
               variant="outline"
               onClick={() => setShowFinishDialog(false)}
-              className="bg-transparent border-gray-600 text-gray-300 hover:bg-gray-700"
+              className="bg-[#101820] border-[#1f2937]/40 text-slate-300 hover:bg-[#101820] hover:text-white"
+              disabled={isProcessing}
             >
               <X className="h-4 w-4 mr-2" />
               Cancelar
             </Button>
             <Button 
               onClick={handleConfirmFinish}
-              className="bg-[#10b981] hover:bg-[#0d8e6a] text-white"
+              disabled={isProcessing}
+              className="bg-gradient-to-br from-[#10b981] to-[#059669] text-white hover:opacity-90"
             >
-              <Check className="h-4 w-4 mr-2" />
-              Finalizar
+              {isProcessing ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Check className="h-4 w-4 mr-2" />
+              )}
+              {isProcessing ? 'Finalizando...' : 'Finalizar'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
       
-      {/* Diálogo de arquivamento */}
       <Dialog open={showArchiveDialog} onOpenChange={setShowArchiveDialog}>
-        <DialogContent className="bg-gray-800 text-white border-gray-700">
+        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
           <DialogHeader>
             <DialogTitle>Arquivar conversa</DialogTitle>
-          </DialogHeader>
-          
-          <div className="py-4">
-            <p className="text-gray-300">
+            <DialogDescription className="text-slate-400">
               Tem certeza que deseja arquivar esta conversa?
               Conversas arquivadas não serão mais exibidas em nenhuma lista.
-            </p>
-          </div>
+            </DialogDescription>
+          </DialogHeader>
           
           <DialogFooter>
             <Button 
               variant="outline"
               onClick={() => setShowArchiveDialog(false)}
-              className="bg-transparent border-gray-600 text-gray-300 hover:bg-gray-700"
+              className="bg-[#101820] border-[#1f2937]/40 text-slate-300 hover:bg-[#101820] hover:text-white"
+              disabled={isProcessing}
             >
               <X className="h-4 w-4 mr-2" />
               Cancelar
             </Button>
             <Button 
               onClick={handleConfirmArchive}
-              className="bg-amber-600 hover:bg-amber-700 text-white"
+              variant="destructive"
+              disabled={isProcessing}
+              className="hover:opacity-90"
             >
-              <Check className="h-4 w-4 mr-2" />
-              Arquivar
+              {isProcessing ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Check className="h-4 w-4 mr-2" />
+              )}
+              {isProcessing ? 'Arquivando...' : 'Arquivar'}
             </Button>
           </DialogFooter>
         </DialogContent>

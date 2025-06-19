@@ -1,108 +1,158 @@
-const Setor = require('../models/Setor');
+import { multiflowApi } from '../services/multiflowApi';
 
-// Obter todos os setores
-const getSetores = async (req, res) => {
-  try {
-    const setores = await Setor.find({ ativo: true });
-    res.status(200).json(setores);
-  } catch (error) {
-    res.status(500).json({ message: 'Erro ao buscar setores', error: error.message });
+class SetorController {
+  constructor() {
+    this.multiflowApi = multiflowApi;
   }
-};
 
-// Criar novo setor
-const createSetor = async (req, res) => {
-  try {
-    const { nome, descricao, responsaveis } = req.body;
-    
-    // Verificar se o setor já existe
-    const setorExistente = await Setor.findOne({ nome });
-    if (setorExistente) {
-      return res.status(400).json({ message: 'Setor com este nome já existe' });
+  async getSetores(userId, isAdmin = false, allUsers = false) {
+    try {
+      return await this.multiflowApi.getSetores(userId, isAdmin, allUsers);
+    } catch (error) {
+      console.error('Erro ao buscar setores:', error);
+      return {
+        success: false,
+        error: error.message,
+        data: []
+      };
     }
-    
-    const novoSetor = new Setor({
-      nome,
-      descricao,
-      responsaveis: responsaveis || []
-    });
-    
-    const setorSalvo = await novoSetor.save();
-    res.status(201).json(setorSalvo);
-  } catch (error) {
-    res.status(500).json({ message: 'Erro ao criar setor', error: error.message });
   }
-};
 
-// Obter setor por ID
-const getSetorById = async (req, res) => {
-  try {
-    const setor = await Setor.findById(req.params.id);
-    
-    if (!setor) {
-      return res.status(404).json({ message: 'Setor não encontrado' });
+  async getSetorById(setorId, userId, isAdmin = false) {
+    try {
+      return await this.multiflowApi.getSetorById(setorId, userId, isAdmin);
+    } catch (error) {
+      console.error(`Erro ao buscar setor ${setorId}:`, error);
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
     }
-    
-    res.status(200).json(setor);
-  } catch (error) {
-    res.status(500).json({ message: 'Erro ao buscar setor', error: error.message });
   }
-};
 
-// Atualizar setor
-const updateSetor = async (req, res) => {
-  try {
-    const { nome, descricao, responsaveis, ativo } = req.body;
-    
-    const setor = await Setor.findById(req.params.id);
-    
-    if (!setor) {
-      return res.status(404).json({ message: 'Setor não encontrado' });
-    }
-    
-    // Verificar nome duplicado
-    if (nome && nome !== setor.nome) {
-      const setorExistente = await Setor.findOne({ nome });
-      if (setorExistente) {
-        return res.status(400).json({ message: 'Setor com este nome já existe' });
+  async createSetor(setorData, userId, isAdmin = false) {
+    try {
+      if (!setorData.nome) {
+        return {
+          success: false,
+          error: 'Nome do setor é obrigatório'
+        };
       }
-    }
-    
-    // Atualizar campos
-    if (nome) setor.nome = nome;
-    if (descricao) setor.descricao = descricao;
-    if (responsaveis) setor.responsaveis = responsaveis;
-    if (ativo !== undefined) setor.ativo = ativo;
-    
-    const setorAtualizado = await setor.save();
-    res.status(200).json(setorAtualizado);
-  } catch (error) {
-    res.status(500).json({ message: 'Erro ao atualizar setor', error: error.message });
-  }
-};
 
-// Excluir setor (exclusão lógica)
-const deleteSetor = async (req, res) => {
-  try {
-    const setor = await Setor.findById(req.params.id);
-    
-    if (!setor) {
-      return res.status(404).json({ message: 'Setor não encontrado' });
+      return await this.multiflowApi.createSetor(setorData, userId, isAdmin);
+    } catch (error) {
+      console.error('Erro ao criar setor:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
-    
-    setor.ativo = false;
-    await setor.save();
-    
-    res.status(200).json({ message: 'Setor desativado com sucesso' });
-  } catch (error) {
-    res.status(500).json({ message: 'Erro ao desativar setor', error: error.message });
   }
-};
 
-module.exports = {
-  getSetores,
-  createSetor,
-  getSetorById,
-  updateSetor,
-  deleteSetor
-};
+  async updateSetor(setorId, setorData, userId, isAdmin = false) {
+    try {
+      if (!setorId) {
+        return {
+          success: false,
+          error: 'ID do setor é obrigatório'
+        };
+      }
+
+      return await this.multiflowApi.updateSetor(setorId, setorData, userId, isAdmin);
+    } catch (error) {
+      console.error(`Erro ao atualizar setor ${setorId}:`, error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  async updateSetorDetalhado(setorId, setorData, userId, isAdmin = false) {
+    try {
+      if (!setorId) {
+        return {
+          success: false,
+          error: 'ID do setor é obrigatório'
+        };
+      }
+
+      return await this.multiflowApi.updateSetorDetalhado(setorId, setorData, userId, isAdmin);
+    } catch (error) {
+      console.error(`Erro ao atualizar setor ${setorId} com detalhes:`, error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  async deleteSetor(setorId, userId, isAdmin = false) {
+    try {
+      if (!setorId) {
+        return {
+          success: false,
+          error: 'ID do setor é obrigatório'
+        };
+      }
+
+      return await this.multiflowApi.deleteSetor(setorId, userId, isAdmin);
+    } catch (error) {
+      console.error(`Erro ao excluir setor ${setorId}:`, error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  async syncSetor(setorId, userId, isAdmin = false) {
+    try {
+      if (!setorId) {
+        return {
+          success: false,
+          error: 'ID do setor é obrigatório'
+        };
+      }
+
+      return await this.multiflowApi.forceSyncSetor(setorId, userId, isAdmin);
+    } catch (error) {
+      console.error(`Erro ao sincronizar setor ${setorId}:`, error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  async validarDadosSetor(setorData) {
+    const erros = [];
+
+    if (!setorData.nome) {
+      erros.push('Nome do setor é obrigatório');
+    } else if (setorData.nome.length < 3) {
+      erros.push('Nome do setor deve ter pelo menos 3 caracteres');
+    }
+
+    if (setorData.descricao && setorData.descricao.length > 500) {
+      erros.push('Descrição do setor deve ter no máximo 500 caracteres');
+    }
+
+    if (setorData.contexto && setorData.contexto.length > 2000) {
+      erros.push('Contexto do setor deve ter no máximo 2000 caracteres');
+    }
+
+    if (setorData.palavrasChave && !Array.isArray(setorData.palavrasChave)) {
+      erros.push('Palavras-chave devem ser fornecidas como um array');
+    }
+
+    return {
+      valido: erros.length === 0,
+      erros
+    };
+  }
+}
+
+const setorController = new SetorController();
+export default setorController;

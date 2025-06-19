@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSocket } from '../contexts/SocketContext';
-import { MessageSquare, Wifi, WifiOff, AlertCircle, RefreshCw } from 'lucide-react';
+import { Wifi, WifiOff, AlertCircle, RefreshCw } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Button } from './ui/button';
+import { Badge } from './ui/badge';
+import { cn } from '../lib/utils';
 
-const ConnectionStatus = ({ setor }) => {
-  const { isConnected, hasUnreadMessages } = useSocket();
+const ConnectionStatus = ({ isConnected, error }) => {
   const [visible, setVisible] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
@@ -11,7 +13,7 @@ const ConnectionStatus = ({ setor }) => {
 
   // Esconder após 5 segundos se estiver conectado
   useEffect(() => {
-    if (isConnected) {
+    if (isConnected && !error) {
       const timer = setTimeout(() => {
         setVisible(false);
       }, 5000);
@@ -19,44 +21,12 @@ const ConnectionStatus = ({ setor }) => {
     } else {
       setVisible(true);
     }
-  }, [isConnected]);
+  }, [isConnected, error]);
 
   // Mostrar novamente se o status de conexão mudar
   useEffect(() => {
     setVisible(true);
-  }, [isConnected]);
-
-  // Mostrar indicador de atualização quando receber mensagens
-  useEffect(() => {
-    if (hasUnreadMessages) {
-      setIsUpdating(true);
-      setVisible(true);
-      
-      // Limpar timeout anterior se existir
-      if (updateTimeoutRef.current) {
-        clearTimeout(updateTimeoutRef.current);
-      }
-      
-      // Atualizar timestamp e esconder indicador após 3 segundos
-      setLastUpdate(new Date());
-      updateTimeoutRef.current = setTimeout(() => {
-        setIsUpdating(false);
-        
-        // Se estiver conectado, esconder após alguns segundos
-        if (isConnected) {
-          setTimeout(() => {
-            setVisible(false);
-          }, 2000);
-        }
-      }, 3000);
-    }
-    
-    return () => {
-      if (updateTimeoutRef.current) {
-        clearTimeout(updateTimeoutRef.current);
-      }
-    };
-  }, [hasUnreadMessages, isConnected]);
+  }, [isConnected, error]);
 
   // Formatar horário da última atualização
   const getFormattedLastUpdate = () => {
@@ -69,60 +39,70 @@ const ConnectionStatus = ({ setor }) => {
     return `${hours}:${minutes}:${seconds}`;
   };
 
-  return (
-    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-4">
+  const getStatusContent = () => {
+    if (isUpdating) {
+      return (
+        <div className="flex items-center gap-2">
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          <span>Atualizando</span>
+          {lastUpdate && <span className="ml-1 text-xs opacity-80">({getFormattedLastUpdate()})</span>}
+        </div>
+      );
+    }
+    
+    if (isConnected) {
+      return (
+        <div className="flex items-center gap-2">
+          <Wifi className="h-4 w-4" />
+          <span>Conectado</span>
+          {lastUpdate && <span className="ml-1 text-xs opacity-80">({getFormattedLastUpdate()})</span>}
+        </div>
+      );
+    }
+    
+    return (
       <div className="flex items-center gap-2">
-        <div className={`h-9 w-9 rounded-lg flex items-center justify-center border transition-colors duration-300 ${
-          hasUnreadMessages 
-            ? "bg-[#10b981]/20 border-[#10b981]/40"
-            : "bg-[#10b981]/10 border-[#10b981]/20"
-        }`}>
-          <MessageSquare className={`h-5 w-5 text-[#10b981] ${hasUnreadMessages ? 'animate-pulse' : ''}`} />
-        </div>
-        <div>
-          <h1 className="text-xl font-bold text-white">Conversas</h1>
-          {setor && (
-            <p className="text-sm text-slate-400">{setor}</p>
-          )}
-        </div>
+        <WifiOff className="h-4 w-4" />
+        <span>{error || "Desconectado"}</span>
+        <Button 
+          variant="outline"
+          size="icon"
+          className="ml-1 h-6 w-6 rounded-full"
+          onClick={() => window.location.reload()}
+          title="Recarregar página"
+        >
+          <RefreshCw className="h-3 w-3" />
+        </Button>
       </div>
+    );
+  };
 
+  return (
+    <AnimatePresence>
       {visible && (
-        <div className={`px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm transition-colors duration-300 ${
-          isUpdating
-            ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-            : isConnected 
-              ? "bg-[#10b981]/10 text-[#10b981] border border-[#10b981]/20" 
-              : "bg-red-500/10 text-red-400 border border-red-500/20"
-        }`}>
-          {isUpdating ? (
-            <>
-              <RefreshCw className="h-4 w-4 animate-spin" />
-              <span>Atualizando</span>
-              {lastUpdate && <span className="ml-1 text-xs opacity-80">({getFormattedLastUpdate()})</span>}
-            </>
-          ) : isConnected ? (
-            <>
-              <Wifi className="h-4 w-4" />
-              <span>Conectado</span>
-              {lastUpdate && <span className="ml-1 text-xs opacity-80">({getFormattedLastUpdate()})</span>}
-            </>
-          ) : (
-            <>
-              <WifiOff className="h-4 w-4" />
-              <span>Desconectado</span>
-              <button 
-                className="ml-1 bg-red-500/20 hover:bg-red-500/30 rounded-full p-1"
-                onClick={() => window.location.reload()}
-                title="Recarregar página"
-              >
-                <RefreshCw className="h-3 w-3" />
-              </button>
-            </>
-          )}
-        </div>
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.3 }}
+          className="w-full"
+        >
+          <Badge
+            variant="outline"
+            className={cn(
+              "flex items-center gap-2 px-3 py-1.5 text-sm w-fit",
+              isUpdating
+                ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                : isConnected 
+                  ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" 
+                  : "bg-destructive/10 text-destructive border-destructive/20"
+            )}
+          >
+            {getStatusContent()}
+          </Badge>
+        </motion.div>
       )}
-    </div>
+    </AnimatePresence>
   );
 };
 

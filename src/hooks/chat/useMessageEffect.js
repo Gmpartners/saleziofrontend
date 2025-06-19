@@ -1,104 +1,95 @@
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
+import { useLocalStorage } from '../useLocalStorage';
 import { notificationService } from '../../services/notificationService';
 
-/**
- * Hook para gerenciar efeitos visuais e sonoros de mensagens
- * @returns {Object} Métodos para controlar efeitos
- */
-export function useMessageEffect() {
-  const [notifications, setNotifications] = useState(true);
-  const [notificationVolume, setNotificationVolume] = useState(0.5);
-  const animatingElementsRef = useRef(new Map());
-
-  // Inicializar configurações a partir do localStorage
+export const useMessageEffect = () => {
+  const [soundEnabled, setSoundEnabled] = useLocalStorage('notification_sound', 'true');
+  const [desktopNotificationsEnabled, setDesktopNotificationsEnabled] = useLocalStorage('notification_desktop', 'true');
+  const [volume, setVolume] = useLocalStorage('notification_volume', '0.5');
+  
+  const [notificationPermission, setNotificationPermission] = useState('default');
+  
   useEffect(() => {
-    // Carregar preferências do usuário do localStorage
-    const savedNotifications = localStorage.getItem('message_notifications');
-    const savedVolume = localStorage.getItem('notification_volume');
+    const checkPermission = async () => {
+      if (!('Notification' in window)) {
+        setNotificationPermission('denied');
+        return;
+      }
+      
+      setNotificationPermission(Notification.permission);
+      
+      if (desktopNotificationsEnabled === 'true' && Notification.permission !== 'granted') {
+        try {
+          const permission = await Notification.requestPermission();
+          setNotificationPermission(permission);
+        } catch (error) {
+          console.error('Erro ao solicitar permissão de notificação:', error);
+        }
+      }
+    };
     
-    if (savedNotifications !== null) {
-      setNotifications(savedNotifications === 'true');
+    checkPermission();
+  }, [desktopNotificationsEnabled]);
+  
+  useEffect(() => {
+    if (soundEnabled === 'true' || soundEnabled === true) {
+      notificationService.toggleSound(true);
+    } else {
+      notificationService.toggleSound(false);
     }
     
-    if (savedVolume !== null) {
-      setNotificationVolume(parseFloat(savedVolume));
+    if (volume && !isNaN(parseFloat(volume))) {
+      notificationService.updateVolume(parseFloat(volume));
     }
     
-    // Configurar serviço de notificação
-    notificationService.preloadSounds();
-    
-    if (savedVolume !== null) {
-      notificationService.updateVolume(parseFloat(savedVolume));
+    if (desktopNotificationsEnabled === 'true' || desktopNotificationsEnabled === true) {
+      notificationService.toggleDesktopNotifications(true);
+    } else {
+      notificationService.toggleDesktopNotifications(false);
     }
-    
-    notificationService.toggleSound(savedNotifications === 'true');
-  }, []);
-
-  // Função para reproduzir som de mensagem
-  const playMessageSound = useCallback((type = 'message') => {
-    if (!notifications) return;
-    
-    if (type === 'message') {
-      notificationService.playSound('message');
-    } else if (type === 'newConversation') {
-      notificationService.playSound('newConversation');
-    } else if (type === 'alert') {
-      notificationService.playSound('alert');
-    }
-  }, [notifications]);
-
-  // Função para animar um elemento DOM quando uma nova mensagem chega
-  const animateNewMessage = useCallback((elementId, type = 'received') => {
-    // Buscar o elemento DOM
-    const element = document.getElementById(elementId);
-    if (!element) return;
-    
-    // Definir a classe de animação
-    const animationClass = type === 'sent' ? 'animate-message-sent' : 'animate-message-received';
-    
-    // Verificar se já está animando
-    if (animatingElementsRef.current.has(elementId)) {
-      // Resetar a animação
-      element.classList.remove(animationClass);
-      // Forçar reflow para reiniciar a animação
-      void element.offsetWidth;
-    }
-    
-    // Adicionar a classe
-    element.classList.add(animationClass);
-    
-    // Rastrear o elemento
-    animatingElementsRef.current.set(elementId, true);
-    
-    // Remover a classe após a animação terminar
-    const animationDuration = 1000; // 1 segundo
-    setTimeout(() => {
-      element.classList.remove(animationClass);
-      animatingElementsRef.current.delete(elementId);
-    }, animationDuration);
-  }, []);
-
-  // Função para alternar notificações
-  const toggleNotifications = useCallback((enabled) => {
-    setNotifications(enabled);
-    localStorage.setItem('message_notifications', enabled.toString());
-    notificationService.toggleSound(enabled);
-  }, []);
-
-  // Função para ajustar volume
-  const updateVolume = useCallback((volume) => {
-    const clampedVolume = Math.max(0, Math.min(1, volume));
-    setNotificationVolume(clampedVolume);
-    localStorage.setItem('notification_volume', clampedVolume.toString());
-    notificationService.updateVolume(clampedVolume);
-  }, []);
-
-  return {
-    playMessageSound,
-    animateNewMessage,
-    toggleNotifications,
-    updateVolume,
-    notificationsEnabled: notifications,
-    notificationVolume
+  }, [soundEnabled, desktopNotificationsEnabled, volume]);
+  
+  const toggleSound = () => {
+    const newValue = soundEnabled === 'true' ? 'false' : 'true';
+    setSoundEnabled(newValue);
+    notificationService.toggleSound(newValue === 'true');
   };
-}
+  
+  const toggleDesktopNotifications = async () => {
+    if (desktopNotificationsEnabled === 'false' && Notification.permission !== 'granted') {
+      try {
+        const permission = await Notification.requestPermission();
+        setNotificationPermission(permission);
+        
+        if (permission !== 'granted') {
+          return false;
+        }
+      } catch (error) {
+        console.error('Erro ao solicitar permissão de notificação:', error);
+        return false;
+      }
+    }
+    
+    const newValue = desktopNotificationsEnabled === 'true' ? 'false' : 'true';
+    setDesktopNotificationsEnabled(newValue);
+    notificationService.toggleDesktopNotifications(newValue === 'true');
+    return true;
+  };
+  
+  const updateVolume = (newVolume) => {
+    if (newVolume < 0 || newVolume > 1) return;
+    
+    setVolume(newVolume.toString());
+    notificationService.updateVolume(newVolume);
+  };
+  
+  return {
+    soundEnabled: soundEnabled === 'true',
+    desktopNotificationsEnabled: desktopNotificationsEnabled === 'true',
+    volume: parseFloat(volume),
+    notificationPermission,
+    toggleSound,
+    toggleDesktopNotifications,
+    updateVolume
+  };
+};

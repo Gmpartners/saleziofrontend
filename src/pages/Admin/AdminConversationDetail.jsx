@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -20,13 +20,16 @@ import {
   Bot,
   Headset,
   Video,
-  MoreVertical
+  MoreVertical,
+  Info,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { multiflowApi } from '../../services/multiflowApi';
 import { useAuthContext } from '../../hooks/useAuthContext';
+import { socketService } from '../../services/socket';
 import { cn } from "../../lib/utils";
-import io from 'socket.io-client';
 
 import MessageBubble from '../../components/conversations/MessageBubble';
 import TypingIndicator from '../../components/conversations/TypingIndicator';
@@ -69,7 +72,6 @@ const STATUS_LABELS = {
   arquivada: 'Arquivada'
 };
 
-// Componente Header da Conversa
 const ConversationHeader = React.memo(({ 
   conversation, 
   onBack, 
@@ -77,7 +79,8 @@ const ConversationHeader = React.memo(({
   isConnected, 
   isLoading,
   onShowActionMenu,
-  isRefreshing 
+  isRefreshing,
+  onToggleInfoPanel
 }) => {
   if (!conversation) return null;
   
@@ -121,35 +124,35 @@ const ConversationHeader = React.memo(({
   const isConversationFinished = conversation.status === STATUS.FINALIZADA || conversation.arquivada;
   
   return (
-    <div className="flex items-center justify-between gap-3 p-4 lg:p-6 pt-4 bg-[#070b11] sticky top-0 z-30 border-b border-[#1f2937]/40">
-      <div className="flex items-center gap-3">
+    <div className="flex items-center justify-between gap-1 sm:gap-3 p-2 sm:p-4 bg-[#070b11] sticky top-0 z-30 border-b border-[#1f2937]/40 flex-shrink-0">
+      <div className="flex items-center gap-2">
         <Button
           variant="ghost"
           size="icon"
           onClick={onBack}
-          className="mr-1 rounded-full h-8 w-8 text-slate-400 hover:text-white hover:bg-[#101820]"
+          className="h-8 w-8 rounded-full text-slate-400 hover:text-white hover:bg-[#101820]"
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
         
-        <Avatar className="h-10 w-10 border-2 border-[#10b981]/30">
+        <Avatar className="h-8 w-8 sm:h-10 sm:w-10 border-2 border-[#10b981]/30">
           <AvatarFallback className="bg-gradient-to-br from-[#10b981] to-[#059669] text-white">
-            {initials || <User className="h-6 w-6" />}
+            {initials || <User className="h-4 w-4 sm:h-5 sm:w-5" />}
           </AvatarFallback>
         </Avatar>
         
-        <div>
-          <h3 className="text-white font-medium">{nomeCliente}</h3>
-          <div className="text-xs flex items-center space-x-2">
-            <span className="text-slate-400">{telefoneCliente || 'Sem telefone'}</span>
+        <div className="overflow-hidden">
+          <h3 className="text-white font-medium text-sm sm:text-base truncate">{nomeCliente}</h3>
+          <div className="text-xs flex flex-wrap items-center gap-1 sm:gap-2">
+            <span className="text-slate-400 text-xs truncate hidden sm:inline">{telefoneCliente || 'Sem telefone'}</span>
             {statusBadge}
             
-            <Badge variant="outline" className="bg-[#101820] text-white border-[#1f2937]/50">
+            <Badge variant="outline" className="bg-[#101820] text-white border-[#1f2937]/50 text-xs">
               {setorNome}
             </Badge>
             
             {conversation.arquivada && (
-              <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20">
+              <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-xs">
                 Arquivada
               </Badge>
             )}
@@ -157,16 +160,11 @@ const ConversationHeader = React.memo(({
         </div>
       </div>
       
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1.5 text-xs text-[#10b981]">
-          <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-[#10b981]' : 'bg-red-500'}`}></span>
-          <span className="hidden sm:inline">{isConnected ? 'Conectado' : 'Desconectado'}</span>
-        </div>
-        
+      <div className="flex items-center gap-1 sm:gap-2">
         <Button 
           size="icon"
           variant="ghost"
-          className="rounded-full h-8 w-8 text-slate-400 hover:text-[#10b981] hover:bg-[#101820]"
+          className="rounded-full h-8 w-8 sm:flex hidden text-slate-400 hover:text-[#10b981] hover:bg-[#101820]"
           title="Chamada de vídeo"
           disabled={isConversationFinished}
           onClick={() => toast.info('Chamada de vídeo não implementada')}
@@ -177,12 +175,22 @@ const ConversationHeader = React.memo(({
         <Button 
           size="icon"
           variant="ghost"
-          className="rounded-full h-8 w-8 text-slate-400 hover:text-[#10b981] hover:bg-[#101820]"
+          className="rounded-full h-8 w-8 sm:flex hidden text-slate-400 hover:text-[#10b981] hover:bg-[#101820]"
           title="Chamada de voz"
           disabled={isConversationFinished}
           onClick={() => toast.info('Chamada de voz não implementada')}
         >
           <Phone className="h-4 w-4" />
+        </Button>
+        
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onToggleInfoPanel}
+          className="rounded-full h-8 w-8 text-slate-400 hover:text-white hover:bg-[#101820]"
+          title="Informações da conversa"
+        >
+          <Info className="h-4 w-4" />
         </Button>
         
         <DropdownMenu>
@@ -193,7 +201,7 @@ const ConversationHeader = React.memo(({
               className="rounded-full h-8 w-8 text-slate-400 hover:text-white hover:bg-[#101820]"
               aria-label="Mais opções"
             >
-              <MoreVertical className="h-5 w-5" />
+              <MoreVertical className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56 bg-[#070b11] border border-[#1f2937]/40 shadow-md z-40">
@@ -235,56 +243,67 @@ const ConversationHeader = React.memo(({
           </DropdownMenuContent>
         </DropdownMenu>
         
-        <Button
-          variant="ghost"
-          size="icon"
-          className="rounded-full h-8 w-8 text-slate-400 hover:text-white hover:bg-[#101820]"
-          title="Atualizar conversa"
-          onClick={onRefresh}
-          disabled={isLoading || isRefreshing}
-        >
-          {isRefreshing ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-        </Button>
+        <div className="flex items-center gap-1">
+          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-[#10b981]' : 'bg-red-500'}`}></div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="rounded-full h-8 w-8 text-slate-400 hover:text-white hover:bg-[#101820]"
+            title={isConnected ? "Atualizar conversa" : "Reconectar"}
+            onClick={isConnected ? onRefresh : () => socketService.reconnect()}
+            disabled={isLoading || isRefreshing}
+          >
+            {isRefreshing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
       </div>
     </div>
   );
 });
 
-// Legenda dos participantes
 const ParticipantLegend = React.memo(() => {
   return (
-    <div className="flex justify-center pt-4 pb-1">
-      <div className="flex items-center space-x-4 bg-[#101820] rounded-lg px-3 py-1 border border-[#1f2937]/40">
+    <div className="flex justify-center py-2">
+      <div className="flex items-center space-x-2 sm:space-x-4 bg-[#101820] rounded-lg px-2 py-1 border border-[#1f2937]/40 text-xs sm:text-sm">
         <div className="flex items-center">
-          <User className="h-3.5 w-3.5 mr-1 text-blue-400" />
-          <span className="text-xs text-blue-400">Cliente</span>
+          <User className="h-3 w-3 sm:h-3.5 sm:w-3.5 mr-1 text-blue-400" />
+          <span className="text-blue-400">Cliente</span>
         </div>
         <div className="flex items-center">
-          <Bot className="h-3.5 w-3.5 mr-1 text-purple-400" />
-          <span className="text-xs text-purple-400">Assistente Virtual</span>
+          <Bot className="h-3 w-3 sm:h-3.5 sm:w-3.5 mr-1 text-purple-400" />
+          <span className="text-purple-400">Assist. Virtual</span>
         </div>
         <div className="flex items-center">
-          <Headset className="h-3.5 w-3.5 mr-1 text-green-400" />
-          <span className="text-xs text-green-400">Atendente</span>
+          <Headset className="h-3 w-3 sm:h-3.5 sm:w-3.5 mr-1 text-green-400" />
+          <span className="text-green-400">Atendente</span>
         </div>
       </div>
     </div>
   );
 });
 
-// Componente para exibir mensagens
-const CustomMessageBubble = React.memo(({ message, prevMessage, isGrouped, isLastInGroup }) => {
+const CustomMessageBubble = React.memo(({ message, prevMessage, nextMessage }) => {
   const isClient = message.remetente === 'cliente';
   const isAI = message.remetente === 'ai' || message.remetente === 'assistente' || message.tipo === 'ai';
   const isSystem = message.remetente === 'sistema' || message.remetente === 'system';
   const isAttendant = message.remetente === 'atendente';
   
-  // Determinamos a posição: cliente à esquerda, outros (AI, sistema, atendente) à direita
-  const isRightAligned = !isClient; // AI, Sistema e Atendente ficam à direita
+  const isRightAligned = !isClient;
+
+  const isPreviousSameRemetente = prevMessage && 
+    prevMessage.remetente === message.remetente &&
+    new Date(message.timestamp) - new Date(prevMessage.timestamp) < 300000;
+
+  const isNextSameRemetente = nextMessage && 
+    nextMessage.remetente === message.remetente &&
+    new Date(nextMessage.timestamp) - new Date(message.timestamp) < 300000;
+
+  const isFirstInGroup = !isPreviousSameRemetente;
+  const isLastInGroup = !isNextSameRemetente;
   
   const getFormattedTime = (timestamp) => {
     try {
@@ -315,31 +334,61 @@ const CustomMessageBubble = React.memo(({ message, prevMessage, isGrouped, isLas
     iconComponent = <Headset className="h-4 w-4 text-[#10b981]" />;
   }
   
+  const getCornerRadiusClasses = () => {
+    const baseRadius = "rounded-lg";
+    
+    if (isFirstInGroup && isLastInGroup) {
+      return baseRadius;
+    }
+    
+    if (!isFirstInGroup && !isLastInGroup) {
+      if (isRightAligned) {
+        return `${baseRadius} rounded-tr-none rounded-br-none`;
+      } else {
+        return `${baseRadius} rounded-tl-none rounded-bl-none`;
+      }
+    }
+    
+    if (!isFirstInGroup && isLastInGroup) {
+      if (isRightAligned) {
+        return `${baseRadius} rounded-tr-none`;
+      } else {
+        return `${baseRadius} rounded-tl-none`;
+      }
+    }
+    
+    if (isFirstInGroup && !isLastInGroup) {
+      if (isRightAligned) {
+        return `${baseRadius} rounded-br-none`;
+      } else {
+        return `${baseRadius} rounded-bl-none`;
+      }
+    }
+    
+    return baseRadius;
+  };
+  
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`flex ${isRightAligned ? 'justify-end' : 'justify-start'} mb-1`}
+      className={`flex w-full ${isRightAligned ? 'justify-end' : 'justify-start'} ${!isLastInGroup ? 'mb-0.5' : 'mb-2'} ${!isFirstInGroup ? 'mt-0.5' : 'mt-3'}`}
     >
-      <div className={`relative max-w-[85%] md:max-w-[70%] ${isGrouped ? (isRightAligned ? 'mr-8' : 'ml-8') : ''}`}>
-        {!isGrouped && !isRightAligned && (
-          <div className="absolute left-[-30px] top-2 rounded-full p-1">
+      <div className={`flex ${isRightAligned ? 'flex-row-reverse' : 'flex-row'} items-start max-w-[85%] sm:max-w-[75%]`}>
+        {isFirstInGroup ? (
+          <div className="flex items-center justify-center rounded-full p-1 mx-1 sm:mx-2 flex-shrink-0 w-7 sm:w-8">
             {iconComponent}
           </div>
+        ) : (
+          <div className="w-7 sm:w-8 mx-1 sm:mx-2 flex-shrink-0" />
         )}
         
-        {!isGrouped && isRightAligned && (
-          <div className="absolute right-[-30px] top-2 rounded-full p-1">
-            {iconComponent}
-          </div>
-        )}
-        
-        <div className={`p-3 rounded-lg ${bgColor} ${textColor}`}>
-          {!isGrouped && (
+        <div className={`p-2 sm:p-3 ${getCornerRadiusClasses()} ${bgColor} ${textColor} break-words`}>
+          {isFirstInGroup && (
             <div className="text-xs font-medium mb-1 text-slate-300">{message.nome}</div>
           )}
           
-          <div className="text-sm whitespace-pre-wrap">{message.conteudo}</div>
+          <div className="text-xs sm:text-sm whitespace-pre-wrap">{message.conteudo}</div>
           
           {isLastInGroup && (
             <div className="text-xs text-right mt-1 text-slate-400">
@@ -352,7 +401,6 @@ const CustomMessageBubble = React.memo(({ message, prevMessage, isGrouped, isLas
   );
 });
 
-// Lista de mensagens
 const MessageList = React.memo(({ 
   messages = [], 
   isTyping,
@@ -360,12 +408,12 @@ const MessageList = React.memo(({
 }) => {
   if (!messages || messages.length === 0) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-center p-6">
-        <div className="w-16 h-16 rounded-full bg-[#101820] flex items-center justify-center mb-4">
-          <MessageSquare className="h-8 w-8 text-slate-400" />
+      <div className="h-full flex flex-col items-center justify-center text-center p-4 sm:p-6">
+        <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-[#101820] flex items-center justify-center mb-4">
+          <MessageSquare className="h-6 w-6 sm:h-8 sm:w-8 text-slate-400" />
         </div>
-        <h3 className="text-xl text-white font-medium mb-2">Conversa sem mensagens</h3>
-        <p className="text-slate-400 max-w-md">
+        <h3 className="text-lg sm:text-xl text-white font-medium mb-2">Conversa sem mensagens</h3>
+        <p className="text-slate-400 max-w-md text-sm sm:text-base">
           Não há mensagens nesta conversa.
         </p>
       </div>
@@ -373,40 +421,31 @@ const MessageList = React.memo(({
   }
 
   return (
-    <div className="flex-1 space-y-2 p-4">
+    <div className="w-full">
       <ParticipantLegend />
       <AnimatePresence>
-        <div className="space-y-1">
+        <div className="w-full pb-4 flex flex-col">
           {messages.map((message, index) => (
             <CustomMessageBubble 
               key={message._id || `msg-${index}`}
               message={message}
               prevMessage={index > 0 ? messages[index - 1] : null}
-              isGrouped={
-                index > 0 && 
-                messages[index - 1].remetente === message.remetente &&
-                new Date(message.timestamp) - new Date(messages[index - 1].timestamp) < 60000
-              }
-              isLastInGroup={
-                index < messages.length - 1 ? 
-                messages[index + 1].remetente !== message.remetente : true
-              }
+              nextMessage={index < messages.length - 1 ? messages[index + 1] : null}
             />
           ))}
           
           {isTyping && (
-            <div className="flex justify-start">
+            <div className="flex justify-start mt-2">
               <TypingIndicator isTyping={true} />
             </div>
           )}
         </div>
       </AnimatePresence>
-      <div ref={messagesEndRef} />
+      <div ref={messagesEndRef} className="h-px w-full" />
     </div>
   );
 });
 
-// Componente de entrada de mensagem
 const MessageInput = React.memo(({ 
   value, 
   onChange, 
@@ -423,41 +462,41 @@ const MessageInput = React.memo(({
   };
 
   return (
-    <form onSubmit={onSubmit} className="p-3 border-t border-[#1f2937]/40 bg-[#0c1118] sticky bottom-0 z-20">
+    <form onSubmit={onSubmit} className="p-2 sm:p-3 border-t border-[#1f2937]/40 bg-[#0c1118] sticky bottom-0 z-20 flex-shrink-0">
       <div className="flex gap-2">
         <Input
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={disabled ? "Conversa finalizada ou arquivada. Não é possível enviar mensagens." : "Digite sua mensagem..."}
-          className="flex-1 bg-[#0f1621] border border-[#1f2937]/50 text-white rounded-md px-4 py-2.5 focus-visible:ring-[#10b981]/30 focus-visible:border-[#10b981]/50"
+          placeholder={disabled ? "Conversa finalizada ou arquivada" : "Digite sua mensagem..."}
+          className="flex-1 bg-[#0f1621] border border-[#1f2937]/50 text-white rounded-md px-3 py-2 sm:px-4 sm:py-2.5 focus-visible:ring-[#10b981]/30 focus-visible:border-[#10b981]/50 text-sm"
           ref={inputRef}
           disabled={disabled || isSending}
         />
         <Button
           type="submit"
           disabled={!value.trim() || disabled || isSending}
-          className="px-4 bg-[#10b981] text-white rounded-md hover:bg-[#0d9268] disabled:opacity-50 disabled:hover:bg-[#10b981]"
+          className="px-3 sm:px-4 bg-[#10b981] text-white rounded-md hover:bg-[#0d9268] disabled:opacity-50 disabled:hover:bg-[#10b981]"
         >
-          {isSending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
+          {isSending ? <Loader2 className="h-4 w-4 sm:h-5 sm:w-5 animate-spin" /> : <Send className="h-4 w-4 sm:h-5 sm:w-5" />}
         </Button>
       </div>
       
       {disabled && (
         <div className="mt-2 text-center text-xs text-slate-400">
-          Esta conversa foi {disabled === 'finalizada' ? 'finalizada' : 'arquivada'}. Não é possível enviar novas mensagens.
+          Esta conversa foi {disabled === 'finalizada' ? 'finalizada' : 'arquivada'}
         </div>
       )}
     </form>
   );
 });
 
-// Painel de informações da conversa
 const InfoPanel = React.memo(({ 
   conversation, 
   onShowActionMenu,
-  isProcessing
+  isProcessing,
+  onClose
 }) => {
   if (!conversation) return null;
   
@@ -469,33 +508,48 @@ const InfoPanel = React.memo(({
     if (!timestamp) return 'Não disponível';
     
     let date;
-    if (timestamp && timestamp.seconds) {
-      date = new Date(timestamp.seconds * 1000);
-    } else if (timestamp && typeof timestamp === 'string') {
-      date = parseISO(timestamp);
-    } else {
-      return 'Não disponível';
+    try {
+      if (timestamp && timestamp.seconds) {
+        date = new Date(timestamp.seconds * 1000);
+      } else if (timestamp && typeof timestamp === 'string') {
+        date = parseISO(timestamp);
+      } else {
+        return 'Não disponível';
+      }
+      
+      return format(date, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+    } catch (error) {
+      console.error("Erro ao formatar timestamp:", error);
+      return 'Data inválida';
     }
-    
-    return format(date, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
   };
   
   return (
-    <div className="p-4">
-      <h2 className="text-lg font-bold text-white mb-4">Informações</h2>
+    <div className="p-3 sm:p-4 h-full overflow-auto">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-base sm:text-lg font-bold text-white">Informações</h2>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onClose}
+          className="sm:hidden h-8 w-8 rounded-full text-slate-400 hover:text-white hover:bg-[#101820]"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
       
-      <div className="space-y-6">
+      <div className="space-y-4 sm:space-y-6">
         <div>
-          <h3 className="text-sm font-medium text-gray-400 mb-2">Cliente</h3>
+          <h3 className="text-xs sm:text-sm font-medium text-gray-400 mb-2">Cliente</h3>
           <div className="bg-[#101820] rounded-lg p-3 border border-[#1f2937]/40">
             <div className="flex items-center gap-2">
               <div className="flex-shrink-0">
                 <User className="h-5 w-5 text-[#10b981]" />
               </div>
               <div className="flex-1">
-                <p className="font-medium text-white">{nomeCliente}</p>
-                <div className="flex items-center text-sm text-slate-400 mt-1">
-                  <Phone className="h-3.5 w-3.5 mr-1" />
+                <p className="font-medium text-white text-sm sm:text-base">{nomeCliente}</p>
+                <div className="flex items-center text-xs sm:text-sm text-slate-400 mt-1">
+                  <Phone className="h-3 w-3 sm:h-3.5 sm:w-3.5 mr-1" />
                   {telefoneCliente || 'Não informado'}
                 </div>
               </div>
@@ -504,8 +558,8 @@ const InfoPanel = React.memo(({
         </div>
         
         <div>
-          <h3 className="text-sm font-medium text-gray-400 mb-2">Conversa</h3>
-          <div className="space-y-3">
+          <h3 className="text-xs sm:text-sm font-medium text-gray-400 mb-2">Conversa</h3>
+          <div className="space-y-2 sm:space-y-3 text-xs sm:text-sm">
             <div className="flex items-center justify-between">
               <span className="text-slate-400">Status:</span>
               {conversation.status ? (
@@ -544,29 +598,29 @@ const InfoPanel = React.memo(({
               <span className="text-white">{conversation.arquivada ? 'Sim' : 'Não'}</span>
             </div>
             
-            <Separator className="my-3 bg-[#1f2937]/40" />
+            <Separator className="my-2 sm:my-3 bg-[#1f2937]/40" />
             
             <div className="flex items-center justify-between">
               <span className="text-slate-400">Criada em:</span>
-              <div className="flex items-center text-sm text-white">
-                <Calendar className="h-3.5 w-3.5 mr-1 text-slate-400" />
+              <div className="flex items-center text-white">
+                <Calendar className="h-3 w-3 sm:h-3.5 sm:w-3.5 mr-1 text-slate-400" />
                 {formatTimestamp(conversation.created || conversation.criadoEm || conversation.createdAt)}
               </div>
             </div>
             
             <div className="flex items-center justify-between">
               <span className="text-slate-400">Última atividade:</span>
-              <div className="flex items-center text-sm text-white">
-                <Calendar className="h-3.5 w-3.5 mr-1 text-slate-400" />
+              <div className="flex items-center text-white">
+                <Calendar className="h-3 w-3 sm:h-3.5 sm:w-3.5 mr-1 text-slate-400" />
                 {formatTimestamp(conversation.ultimaAtividade || conversation.updatedAt)}
               </div>
             </div>
           </div>
         </div>
         
-        <div className="space-y-2 pt-3">
+        <div className="space-y-2 pt-2 sm:pt-3">
           <Button 
-            className="w-full bg-gradient-to-br from-[#10b981] to-[#059669] hover:opacity-90 text-white"
+            className="w-full bg-gradient-to-br from-[#10b981] to-[#059669] hover:opacity-90 text-white text-sm"
             onClick={() => onShowActionMenu('transferir')}
             disabled={conversation.status === 'finalizada' || conversation.arquivada || isProcessing}
           >
@@ -575,7 +629,7 @@ const InfoPanel = React.memo(({
           </Button>
           
           <Button 
-            className="w-full bg-[#1f2937] hover:opacity-90 text-white"
+            className="w-full bg-[#1f2937] hover:opacity-90 text-white text-sm"
             onClick={() => onShowActionMenu('finalizar')}
             disabled={conversation.status === 'finalizada' || conversation.arquivada || isProcessing}
           >
@@ -586,7 +640,7 @@ const InfoPanel = React.memo(({
           {conversation.arquivada ? (
             <Button 
               variant="outline"
-              className="w-full border-[#1f2937]/40 bg-[#101820] text-white flex items-center gap-2 hover:bg-[#101820] hover:text-[#10b981]"
+              className="w-full border-[#1f2937]/40 bg-[#101820] text-white flex items-center gap-2 hover:bg-[#101820] hover:text-[#10b981] text-sm"
               onClick={() => onShowActionMenu('desarquivar')}
               disabled={isProcessing}
             >
@@ -596,7 +650,7 @@ const InfoPanel = React.memo(({
           ) : (
             <Button 
               variant="outline"
-              className="w-full border-[#1f2937]/40 bg-[#101820] text-white flex items-center gap-2 hover:bg-[#101820] hover:text-amber-400"
+              className="w-full border-[#1f2937]/40 bg-[#101820] text-white flex items-center gap-2 hover:bg-[#101820] hover:text-amber-400 text-sm"
               onClick={() => onShowActionMenu('arquivar')}
               disabled={isProcessing}
             >
@@ -608,7 +662,7 @@ const InfoPanel = React.memo(({
           <div className="pt-1">
             <Button 
               variant="destructive"
-              className="w-full flex items-center gap-2"
+              className="w-full flex items-center gap-2 text-sm"
               onClick={() => onShowActionMenu('excluir')}
               disabled={isProcessing}
             >
@@ -622,12 +676,33 @@ const InfoPanel = React.memo(({
   );
 });
 
-// Componente principal de detalhes da conversa
+const ConversationNotFound = ({ onBack }) => {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+      <AlertCircle className="h-12 w-12 text-amber-500 mb-4" />
+      <h2 className="text-xl text-white font-medium mb-2">Conversa não encontrada</h2>
+      <p className="text-slate-400 mb-6 max-w-md">
+        Esta conversa não existe ou pode ter sido removida. Você será redirecionado para a lista de conversas em alguns segundos.
+      </p>
+      <Button
+        onClick={onBack}
+        className="bg-gradient-to-br from-[#10b981] to-[#059669] text-white"
+      >
+        <ArrowLeft className="h-4 w-4 mr-2" />
+        Voltar agora
+      </Button>
+    </div>
+  );
+};
+
 const AdminConversationDetail = () => {
   const { conversationId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { apiToken, user, userProfile } = useAuthContext();
-  const socketRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
+  const maxReconnectAttempts = useRef(5);
+  const reconnectAttempts = useRef(0);
   const pollingIntervalRef = useRef(null);
   
   const [conversation, setConversation] = useState(null);
@@ -640,7 +715,10 @@ const AdminConversationDetail = () => {
   const [actionType, setActionType] = useState(null);
   const [sectors, setSectors] = useState([]);
   const [selectedSector, setSelectedSector] = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(socketService.isConnectedToServer());
+  const [showInfoPanel, setShowInfoPanel] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [conversationNotFound, setConversationNotFound] = useState(false);
   
   const [message, setMessage] = useState('');
   const [showTransferDialog, setShowTransferDialog] = useState(false);
@@ -651,54 +729,47 @@ const AdminConversationDetail = () => {
   const messagesEndRef = useRef(null);
   const messageInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const messageContainerRef = useRef(null);
+  const fetchTimeoutRef = useRef(null);
+  const fetchRetryCount = useRef(0);
+  const maxFetchRetries = 3;
   
-  // Configurar o socket para conexão em tempo real
   useEffect(() => {
-    if (!apiToken || !userProfile) return;
-    
-    // Inicializar socket
-    const socket = io(import.meta.env.VITE_API_BASE_URL || 'https://api.salezio.com.br', {
-      auth: {
-        token: apiToken
-      },
-      path: '/socket.io',
-      transports: ['websocket', 'polling'],
-      upgrade: true,
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      forceNew: true,
-      timeout: 20000
-    });
-    
-    socketRef.current = socket;
-    
-    // Eventos de socket
-    socket.on('connect', () => {
-      console.log('Socket conectado (Admin Detail)');
+    const handleSocketConnect = () => {
+      console.log('Socket conectado.');
       setIsConnected(true);
+      reconnectAttempts.current = 0;
       
-      // Registrar como admin
-      const userId = userProfile?.id || user?.uid;
-      if (userId) {
-        socket.emit('register_admin', { userId });
+      if (userProfile) {
+        socketService.authenticate(userProfile?.id || user?.uid, userProfile);
       }
-    });
+      
+      if (conversationId) {
+        socketService.subscribeToConversation(conversationId, true);
+      }
+    };
     
-    socket.on('disconnect', () => {
-      console.log('Socket desconectado (Admin Detail)');
+    const handleSocketDisconnect = () => {
+      console.log('Socket desconectado.');
       setIsConnected(false);
-    });
+    };
     
-    socket.on('new_message', (data) => {
-      if (data.conversationId === conversationId) {
-        // Atualizar a conversa quando chegar nova mensagem
+    const handleSocketError = (err) => {
+      console.error('Erro no socket:', err);
+    };
+    
+    const unsubscribeConnect = socketService.on('connect', handleSocketConnect);
+    const unsubscribeDisconnect = socketService.on('disconnect', handleSocketDisconnect);
+    const unsubscribeError = socketService.on('error', handleSocketError);
+    
+    const unsubscribeNewMessage = socketService.on('nova_mensagem', (data) => {
+      if (data && (data.conversaId === conversationId || data.conversationId === conversationId)) {
         fetchConversation(true);
       }
     });
     
-    socket.on('typing', (data) => {
-      if (data.conversationId === conversationId) {
+    const unsubscribeTyping = socketService.on('typing_indicator', (data) => {
+      if (data && (data.conversaId === conversationId || data.conversationId === conversationId)) {
         setIsTyping(true);
         
         if (typingTimeoutRef.current) {
@@ -711,124 +782,205 @@ const AdminConversationDetail = () => {
       }
     });
     
-    socket.on('conversation_updated', (data) => {
-      if (data.conversationId === conversationId) {
+    const unsubscribeConversationUpdated = socketService.on('conversa_atualizada', (data) => {
+      if (data && (data.conversaId === conversationId || data.conversationId === conversationId || 
+          data._id === conversationId)) {
         fetchConversation(true);
       }
     });
     
-    // Limpar na desmontagem
+    if (!socketService.isConnectedToServer()) {
+      socketService.reconnect();
+    } else if (conversationId) {
+      socketService.subscribeToConversation(conversationId, true);
+    }
+    
     return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
+      unsubscribeConnect();
+      unsubscribeDisconnect();
+      unsubscribeError();
+      unsubscribeNewMessage();
+      unsubscribeTyping();
+      unsubscribeConversationUpdated();
+      
+      if (conversationId) {
+        try {
+          socketService.unsubscribeFromConversation(conversationId, true);
+        } catch (error) {
+          console.error("Erro ao cancelar inscrição na conversa:", error);
+        }
       }
       
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
       }
       
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = null;
+      }
+      
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
       }
     };
-  }, [apiToken, userProfile, conversationId]);
+  }, [conversationId, userProfile, user]);
   
-  // Configurar polling de backup para atualização da conversa
   useEffect(() => {
-    // Intervalo de atualização a cada 10 segundos como backup
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+    
+    const pollInterval = 30000;
+    
     pollingIntervalRef.current = setInterval(() => {
-      if (!isRefreshing && conversationId) {
+      if (conversationId && !isRefreshing && !conversationNotFound) {
         fetchConversation(true);
       }
-    }, 10000);
+    }, pollInterval);
     
     return () => {
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [isRefreshing, conversationId]);
+  }, [conversationId, isRefreshing, conversationNotFound]);
   
-  // Buscar setores
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  
   const fetchSectors = useCallback(async () => {
     try {
-      const userId = userProfile?.id || user?.uid;
-      if (!userId || !apiToken) {
+      if (!apiToken) {
         return;
       }
       
-      const response = await multiflowApi.getSetores(userId, true);
+      const response = await multiflowApi.getSetores(null, true);
       
       if (response.success) {
         setSectors(response.data);
+      } else {
+        console.warn('Não foi possível obter os setores:', response.error);
       }
     } catch (err) {
       console.error('Erro ao buscar setores:', err);
     }
-  }, [userProfile, user, apiToken]);
+  }, [apiToken]);
   
-  // Buscar conversa
   const fetchConversation = useCallback(async (silent = false) => {
-    try {
-      if (!conversationId) return;
-      
-      if (!silent) {
-        setIsLoading(true);
-      } else {
-        setIsRefreshing(true);
-      }
-      
-      setError(null);
-      
-      const userId = userProfile?.id || user?.uid;
-      if (!userId) {
-        throw new Error('ID do usuário não disponível');
-      }
-      
-      if (!apiToken) {
-        throw new Error('Token de API não fornecido');
-      }
-      
-      const result = await multiflowApi.getConversa(conversationId, userId, true, true);
-      
-      if (!result.success) {
-        throw new Error(result.error || 'Falha ao carregar a conversa');
-      }
-      
-      setConversation(result.data);
-      
-      // Scroll para o final depois de carregar
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 100);
-      
-    } catch (err) {
-      console.error('Erro ao buscar conversa:', err);
-      if (!silent) {
-        setError(typeof err === 'string' ? err : err.message || 'Erro ao buscar detalhes da conversa');
-        toast.error('Erro ao carregar conversa', {
-          description: typeof err === 'string' ? err : err.message || 'Tente novamente mais tarde'
-        });
-      }
-    } finally {
-      if (!silent) {
-        setIsLoading(false);
-      }
-      setIsRefreshing(false);
+    if (fetchTimeoutRef.current) {
+      clearTimeout(fetchTimeoutRef.current);
     }
-  }, [conversationId, userProfile, user, apiToken]);
+    
+    if (conversationNotFound && fetchRetryCount.current >= maxFetchRetries) {
+      return;
+    }
+    
+    fetchTimeoutRef.current = setTimeout(async () => {
+      try {
+        if (!conversationId) return;
+        
+        if (!silent) {
+          setIsLoading(true);
+        } else {
+          setIsRefreshing(true);
+        }
+        
+        setError(null);
+        
+        if (!apiToken) {
+          throw new Error('Token de API não fornecido');
+        }
+        
+        console.log(`Buscando conversa ${conversationId}...`);
+        const normalizedId = multiflowApi.getConversaId(conversationId);
+        const result = await multiflowApi.getConversa(normalizedId, null, true, true);
+        
+        if (!result.success) {
+          fetchRetryCount.current += 1;
+          
+          if (fetchRetryCount.current < maxFetchRetries) {
+            console.log(`Tentativa ${fetchRetryCount.current} de ${maxFetchRetries} falhou, tentando novamente...`);
+            
+            if (!silent) {
+              setTimeout(() => fetchConversation(silent), 1000 * fetchRetryCount.current);
+            }
+            return;
+          }
+          
+          throw new Error(result.error || 'Falha ao carregar a conversa');
+        }
+        
+        fetchRetryCount.current = 0;
+        console.log('Conversa carregada com sucesso:', result.data);
+        setConversation(result.data);
+        setConversationNotFound(false);
+        
+        scrollToBottom();
+        
+      } catch (err) {
+        console.error('Erro ao buscar conversa:', err);
+        
+        const isNotFoundError = err.message === 'Conversa não encontrada' || 
+                               err.message.includes('não encontrada') || 
+                               err.message.includes('not found');
+        
+        if (isNotFoundError) {
+          setConversationNotFound(true);
+          setConversation(null);
+          
+          if (!silent && fetchRetryCount.current >= maxFetchRetries) {
+            toast.error('Conversa não encontrada', {
+              description: 'Você será redirecionado para a lista de conversas em 5 segundos'
+            });
+            
+            setTimeout(() => {
+              navigate('/admin/conversations', { replace: true });
+            }, 5000);
+          }
+        } else if (!silent) {
+          setError(err.message || 'Erro ao buscar detalhes da conversa');
+          
+          toast.error('Erro ao carregar conversa', {
+            description: err.message || 'Tente novamente mais tarde'
+          });
+        }
+      } finally {
+        if (!silent) {
+          setIsLoading(false);
+        }
+        setIsRefreshing(false);
+        fetchTimeoutRef.current = null;
+      }
+    }, 200);
+  }, [conversationId, apiToken, navigate, conversationNotFound, maxFetchRetries]);
   
-  // Transformar mensagens para formato correto
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      } else if (messageContainerRef.current) {
+        messageContainerRef.current.scrollTop = messageContainerRef.current.scrollHeight;
+      }
+    }, 100);
+  }, []);
+  
+  useEffect(() => {
+    if (messagesEndRef.current && messageContainerRef.current) {
+      scrollToBottom();
+    }
+  }, [conversation, scrollToBottom]);
+  
   const transformMessages = useCallback((rawMessages) => {
     if (!rawMessages || !Array.isArray(rawMessages)) return [];
     
     return rawMessages.map(msg => {
       let remetente, nome;
       
-      // Identificação correta do tipo de mensagem
       if (msg.remetente === 'atendente') {
         remetente = 'atendente';
         nome = msg.nome || 'Atendente';
@@ -859,14 +1011,12 @@ const AdminConversationDetail = () => {
     });
   }, [conversation]);
   
-  // Enviar indicador de digitação
   const sendTypingIndicator = useCallback(() => {
-    if (socketRef.current && isConnected && conversationId) {
-      socketRef.current.emit('typing', { conversationId });
+    if (isConnected && conversationId) {
+      socketService.sendTypingIndicator(conversationId, true);
     }
   }, [isConnected, conversationId]);
   
-  // Enviar mensagem
   const handleSendMessage = async (e) => {
     e?.preventDefault();
     
@@ -877,26 +1027,44 @@ const AdminConversationDetail = () => {
     setMessage('');
     
     try {
-      const userId = userProfile?.id || user?.uid;
-      const result = await multiflowApi.enviarMensagem(
-        conversationId,
-        messageText,
-        userId,
-        'texto',
-        true
-      );
+      let success = false;
+      let attempts = 0;
+      let errorMsg = '';
+      const maxAttempts = 3;
       
-      if (!result.success) {
-        throw new Error(result.error || 'Falha ao enviar mensagem');
+      while (!success && attempts < maxAttempts) {
+        try {
+          const normalizedId = multiflowApi.getConversaId(conversationId);
+          const result = await multiflowApi.enviarMensagem(
+            normalizedId,
+            messageText,
+            null,
+            'texto',
+            true
+          );
+          
+          if (!result.success) {
+            throw new Error(result.error || 'Falha ao enviar mensagem');
+          }
+          
+          success = true;
+        } catch (error) {
+          attempts++;
+          errorMsg = error.message;
+          console.error(`Tentativa ${attempts} falhou: ${error.message}`);
+          
+          if (attempts < maxAttempts) {
+            await new Promise(r => setTimeout(r, 1000 * attempts));
+          }
+        }
       }
       
-      // Atualizar a conversa
-      await fetchConversation(true);
+      if (!success) {
+        throw new Error(errorMsg || 'Falha em todas as tentativas de envio');
+      }
       
-      // Scroll para o final
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, 100);
+      await fetchConversation(true);
+      scrollToBottom();
       
     } catch (error) {
       console.error("Erro ao enviar mensagem:", error);
@@ -911,36 +1079,55 @@ const AdminConversationDetail = () => {
     }
   };
   
-  // Efeitos iniciais
   useEffect(() => {
     fetchConversation();
     fetchSectors();
     
-    // Focar no input ao carregar
     if (messageInputRef.current) {
       messageInputRef.current.focus();
     }
+    
+    return () => {
+      fetchRetryCount.current = 0;
+      
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
+      }
+      
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+      
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+    };
   }, [fetchConversation, fetchSectors]);
   
-  // Efeito para detectar digitação
   useEffect(() => {
     if (message && isConnected) {
       sendTypingIndicator();
     }
   }, [message, isConnected, sendTypingIndicator]);
   
-  // Handler para atualizar conversa
   const handleRefresh = () => {
     if (isRefreshing) return;
+    fetchRetryCount.current = 0;
     fetchConversation(true);
   };
   
-  // Handler para voltar
   const handleBack = () => {
     navigate('/admin/conversations');
   };
   
-  // Handler para ações
+  const handleToggleInfoPanel = useCallback(() => {
+    setShowInfoPanel(!showInfoPanel);
+  }, [showInfoPanel]);
+  
   const handleShowActionMenu = (action) => {
     switch (action) {
       case 'transferir':
@@ -963,125 +1150,123 @@ const AdminConversationDetail = () => {
     }
   };
   
-  // Handler para transferir conversa
+  const performOperation = async (operation, actionName, successMessage) => {
+    if (!conversation || isProcessing) return false;
+    
+    setIsProcessing(true);
+    setActionType(actionName);
+    
+    try {
+      let success = false;
+      let attempts = 0;
+      let errorMsg = '';
+      const maxAttempts = 3;
+      
+      while (!success && attempts < maxAttempts) {
+        try {
+          const result = await operation();
+          
+          if (!result.success) {
+            throw new Error(result.error || `Falha ao ${actionName} conversa`);
+          }
+          
+          success = true;
+        } catch (error) {
+          attempts++;
+          errorMsg = error.message;
+          console.error(`Tentativa ${attempts} falhou: ${error.message}`);
+          
+          if (attempts < maxAttempts) {
+            await new Promise(r => setTimeout(r, 1000 * attempts));
+          }
+        }
+      }
+      
+      if (!success) {
+        throw new Error(errorMsg || `Falha em todas as tentativas de ${actionName}`);
+      }
+      
+      toast.success(successMessage);
+      return true;
+    } catch (error) {
+      console.error(`Erro ao ${actionName} conversa:`, error);
+      toast.error(`Erro ao ${actionName} conversa: ${error.message || 'Erro desconhecido'}`);
+      return false;
+    } finally {
+      setIsProcessing(false);
+      setActionType(null);
+    }
+  };
+  
   const handleConfirmTransfer = async () => {
     if (!conversation || !selectedSector || isProcessing) return;
     
-    setIsProcessing(true);
-    setActionType('transferir');
+    const normalizedId = multiflowApi.getConversaId(conversationId);
+    const normalizedSectorId = multiflowApi.normalizeId(selectedSector, 'setor');
     
-    try {
-      const userId = userProfile?.id || user?.uid;
-      const result = await multiflowApi.transferirConversa(
-        conversationId, 
-        selectedSector, 
-        userId,
-        '', 
-        true
-      );
-      
-      if (!result.success) {
-        throw new Error(result.error || 'Falha ao transferir conversa');
-      }
-      
-      toast.success('Conversa transferida com sucesso');
+    const result = await performOperation(
+      () => multiflowApi.transferirConversa(normalizedId, normalizedSectorId, null, '', true),
+      'transferir',
+      'Conversa transferida com sucesso'
+    );
+    
+    if (result) {
       setSelectedSector(null);
       setShowTransferDialog(false);
-      
       await fetchConversation();
-    } catch (error) {
-      console.error('Erro ao transferir conversa:', error);
-      toast.error('Erro ao transferir conversa: ' + (error.message || 'Erro desconhecido'));
-    } finally {
-      setIsProcessing(false);
-      setActionType(null);
     }
   };
   
-  // Handler para finalizar conversa
   const handleConfirmFinish = async () => {
     if (!conversation || isProcessing) return;
     
-    setIsProcessing(true);
-    setActionType('finalizar');
+    const normalizedId = multiflowApi.getConversaId(conversationId);
     
-    try {
-      const userId = userProfile?.id || user?.uid;
-      const result = await multiflowApi.finalizarConversa(conversationId, userId, true);
-      
-      if (!result.success) {
-        throw new Error(result.error || 'Falha ao finalizar conversa');
-      }
-      
-      toast.success('Conversa finalizada com sucesso');
+    const result = await performOperation(
+      () => multiflowApi.finalizarConversa(normalizedId, null, true),
+      'finalizar',
+      'Conversa finalizada com sucesso'
+    );
+    
+    if (result) {
       setShowFinishDialog(false);
-      
       await fetchConversation();
-    } catch (error) {
-      console.error('Erro ao finalizar conversa:', error);
-      toast.error('Erro ao finalizar conversa: ' + (error.message || 'Erro desconhecido'));
-    } finally {
-      setIsProcessing(false);
-      setActionType(null);
     }
   };
   
-  // Handler para arquivar conversa
   const handleConfirmArchive = async () => {
     if (!conversation || isProcessing) return;
     
-    setIsProcessing(true);
-    setActionType('arquivar');
+    const normalizedId = multiflowApi.getConversaId(conversationId);
     
-    try {
-      const userId = userProfile?.id || user?.uid;
-      const result = await multiflowApi.arquivarConversa(conversationId, userId, true);
-      
-      if (!result.success) {
-        throw new Error(result.error || 'Falha ao arquivar conversa');
-      }
-      
-      toast.success('Conversa arquivada com sucesso');
+    const result = await performOperation(
+      () => multiflowApi.arquivarConversa(normalizedId, null, true),
+      'arquivar',
+      'Conversa arquivada com sucesso'
+    );
+    
+    if (result) {
       setShowArchiveDialog(false);
-      
       await fetchConversation();
-    } catch (error) {
-      console.error('Erro ao arquivar conversa:', error);
-      toast.error('Erro ao arquivar conversa: ' + (error.message || 'Erro desconhecido'));
-    } finally {
-      setIsProcessing(false);
-      setActionType(null);
     }
   };
   
-  // Handler para desarquivar conversa
   const handleUnarchiveConversation = async () => {
     if (!conversation || isProcessing) return;
     
-    setIsProcessing(true);
-    setActionType('desarquivar');
+    const normalizedId = multiflowApi.getConversaId(conversationId);
     
-    try {
-      const userId = userProfile?.id || user?.uid;
-      const result = await multiflowApi.desarquivarConversa(conversationId, userId, true);
-      
-      if (!result.success) {
-        throw new Error(result.error || 'Falha ao desarquivar conversa');
-      }
-      
-      toast.success('Conversa desarquivada com sucesso');
-      
+    const result = await performOperation(
+      () => multiflowApi.desarquivarConversa(normalizedId, null, true),
+      'desarquivar',
+      'Conversa desarquivada com sucesso'
+    );
+    
+    if (result) {
       await fetchConversation();
-    } catch (error) {
-      console.error('Erro ao desarquivar conversa:', error);
-      toast.error('Erro ao desarquivar conversa: ' + (error.message || 'Erro desconhecido'));
-    } finally {
-      setIsProcessing(false);
-      setActionType(null);
     }
   };
   
-  // Handler para excluir conversa
   const handleConfirmDelete = async () => {
     if (!conversation || isProcessing) return;
     
@@ -1089,16 +1274,17 @@ const AdminConversationDetail = () => {
     setActionType('excluir');
     
     try {
-      const userId = userProfile?.id || user?.uid;
-      
+      const normalizedId = multiflowApi.getConversaId(conversationId);
       let result;
+      
       try {
-        result = await multiflowApi.delete(`/users/${userId}/conversas/${conversationId}`, {
-          params: { role: 'admin' }
+        result = await multiflowApi.delete(`/users/${multiflowApi.FIXED_USER_ID}/conversas/${normalizedId}`, {
+          params: { role: 'admin', isAdmin: 'true' }
         });
       } catch (deleteError) {
-        // Fallback para arquivar se excluir falhar
-        result = await multiflowApi.arquivarConversa(conversationId, userId, true);
+        console.warn('Falha ao excluir, tentando arquivar:', deleteError);
+        
+        result = await multiflowApi.arquivarConversa(normalizedId, null, true);
       }
       
       if (!result || !result.success) {
@@ -1107,7 +1293,10 @@ const AdminConversationDetail = () => {
       
       toast.success('Conversa excluída com sucesso');
       setShowDeleteDialog(false);
-      navigate('/admin/conversations');
+      
+      setTimeout(() => {
+        navigate('/admin/conversations', { replace: true });
+      }, 500);
     } catch (error) {
       console.error('Erro ao excluir conversa:', error);
       toast.error('Erro ao excluir conversa: ' + (error.message || 'Erro desconhecido'));
@@ -1117,11 +1306,10 @@ const AdminConversationDetail = () => {
     }
   };
   
-  // Renderizar diálogos
   const renderDialogs = () => (
     <>
       <Dialog open={showTransferDialog} onOpenChange={setShowTransferDialog}>
-        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
+        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white max-w-[90vw] sm:max-w-md mx-auto">
           <DialogHeader>
             <DialogTitle>Transferir conversa</DialogTitle>
             <DialogDescription className="text-slate-400">
@@ -1131,16 +1319,16 @@ const AdminConversationDetail = () => {
           
           <div className="py-4">
             <RadioGroup value={selectedSector} onValueChange={setSelectedSector}>
-              <div className="space-y-3 max-h-[300px] overflow-auto">
+              <div className="space-y-3 max-h-[40vh] overflow-auto">
                 {sectors && sectors.map(sector => (
-                  <div key={sector._id || sector.id} className="flex items-start space-x-2">
+                  <div key={sector._id || sector.id || sector.setorId} className="flex items-start space-x-2">
                     <RadioGroupItem 
-                      value={sector._id || sector.id} 
-                      id={`sector-${sector._id || sector.id}`}
+                      value={sector._id || sector.id || sector.setorId} 
+                      id={`sector-${sector._id || sector.id || sector.setorId}`}
                       className="mt-1 text-[#10b981] border-[#1f2937]/40"
                     />
                     <Label 
-                      htmlFor={`sector-${sector._id || sector.id}`}
+                      htmlFor={`sector-${sector._id || sector.id || sector.setorId}`}
                       className="flex-1 cursor-pointer text-white"
                     >
                       <div className="font-medium">{sector.nome}</div>
@@ -1156,7 +1344,7 @@ const AdminConversationDetail = () => {
             </RadioGroup>
           </div>
           
-          <DialogFooter>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button 
               variant="outline"
               onClick={() => setShowTransferDialog(false)}
@@ -1183,16 +1371,15 @@ const AdminConversationDetail = () => {
       </Dialog>
       
       <Dialog open={showFinishDialog} onOpenChange={setShowFinishDialog}>
-        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
+        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white max-w-[90vw] sm:max-w-md mx-auto">
           <DialogHeader>
             <DialogTitle>Finalizar conversa</DialogTitle>
             <DialogDescription className="text-slate-400">
               Tem certeza que deseja finalizar esta conversa?
-              A conversa será movida para a lista de conversas concluídas.
             </DialogDescription>
           </DialogHeader>
           
-          <DialogFooter>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button 
               variant="outline"
               onClick={() => setShowFinishDialog(false)}
@@ -1219,16 +1406,15 @@ const AdminConversationDetail = () => {
       </Dialog>
       
       <Dialog open={showArchiveDialog} onOpenChange={setShowArchiveDialog}>
-        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
+        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white max-w-[90vw] sm:max-w-md mx-auto">
           <DialogHeader>
             <DialogTitle>Arquivar conversa</DialogTitle>
             <DialogDescription className="text-slate-400">
               Tem certeza que deseja arquivar esta conversa?
-              Conversas arquivadas não serão mais exibidas em nenhuma lista.
             </DialogDescription>
           </DialogHeader>
           
-          <DialogFooter>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button 
               variant="outline"
               onClick={() => setShowArchiveDialog(false)}
@@ -1256,7 +1442,7 @@ const AdminConversationDetail = () => {
       </Dialog>
       
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
+        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white max-w-[90vw] sm:max-w-md mx-auto">
           <DialogHeader>
             <DialogTitle>Excluir conversa</DialogTitle>
             <DialogDescription className="text-slate-400">
@@ -1265,7 +1451,7 @@ const AdminConversationDetail = () => {
             </DialogDescription>
           </DialogHeader>
           
-          <DialogFooter>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button 
               variant="outline"
               onClick={() => setShowDeleteDialog(false)}
@@ -1295,19 +1481,20 @@ const AdminConversationDetail = () => {
   );
 
   return (
-    <div className="h-full w-full flex flex-col bg-[#070b11] relative">
+    <div className="h-full w-full flex flex-col bg-[#070b11] relative overflow-hidden">
       <div className="absolute inset-0 pointer-events-none opacity-5">
         <div className="absolute inset-0 bg-[url('https://flowbite.s3.amazonaws.com/blocks/marketing-ui/hero/grid-pattern-dark.svg')] bg-repeat"></div>
       </div>
       
       {renderDialogs()}
       
-      <div className="flex-1 w-full h-full overflow-hidden relative z-10">
-        <div className="h-full grid grid-cols-1 md:grid-cols-3 overflow-hidden">
+      <div className="flex-1 w-full h-full relative z-10">
+        <div className={`h-full ${isMobile ? 'flex flex-col' : 'md:grid md:grid-cols-3'}`}>
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="h-full flex flex-col bg-[#070b11] rounded-xl border border-[#1f2937]/40 overflow-hidden shadow-md md:col-span-2"
+            className={`h-full flex flex-col bg-[#070b11] rounded-none sm:rounded-xl border-0 sm:border border-[#1f2937]/40 shadow-md 
+              ${showInfoPanel ? 'hidden md:flex' : 'flex'} md:col-span-2 overflow-hidden`}
           >
             {isLoading ? (
               <div className="flex-1 flex justify-center items-center">
@@ -1322,13 +1509,24 @@ const AdminConversationDetail = () => {
                     Erro ao carregar conversa
                   </h3>
                   <p className="text-slate-400 mb-4">{error}</p>
-                  <Button 
-                    onClick={handleRefresh}
-                    className="bg-gradient-to-br from-[#10b981] to-[#059669] text-white hover:opacity-90"
-                  >
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Tentar novamente
-                  </Button>
+                  <div className="space-y-2">
+                    <Button 
+                      onClick={handleRefresh}
+                      className="bg-gradient-to-br from-[#10b981] to-[#059669] text-white hover:opacity-90"
+                    >
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Tentar novamente
+                    </Button>
+                    
+                    <Button 
+                      onClick={handleBack}
+                      variant="outline" 
+                      className="w-full bg-[#101820] border-[#1f2937]/40 text-white"
+                    >
+                      <ArrowLeft className="h-4 w-4 mr-2" />
+                      Voltar para lista de conversas
+                    </Button>
+                  </div>
                 </div>
               </div>
             ) : conversation ? (
@@ -1341,10 +1539,17 @@ const AdminConversationDetail = () => {
                   isLoading={isLoading}
                   isRefreshing={isRefreshing}
                   onShowActionMenu={handleShowActionMenu}
+                  onToggleInfoPanel={handleToggleInfoPanel}
                 />
                 
                 <div 
-                  className="flex-1 overflow-y-auto custom-scrollbar bg-[#070b11]"
+                  ref={messageContainerRef}
+                  className="flex-1 overflow-y-auto overflow-x-hidden px-2 sm:px-3 scroll-smooth"
+                  style={{
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: '#1f2937 transparent',
+                    WebkitOverflowScrolling: 'touch'
+                  }}
                 >
                   <MessageList 
                     messages={transformMessages(conversation.mensagens)} 
@@ -1366,6 +1571,8 @@ const AdminConversationDetail = () => {
                   inputRef={messageInputRef}
                 />
               </>
+            ) : conversationNotFound ? (
+              <ConversationNotFound onBack={handleBack} />
             ) : (
               <div className="flex-1 flex justify-center items-center">
                 <div className="text-center">
@@ -1389,7 +1596,8 @@ const AdminConversationDetail = () => {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="h-full flex flex-col bg-[#070b11] rounded-xl border border-[#1f2937]/40 overflow-auto shadow-md"
+            className={`h-full max-h-full flex flex-col bg-[#070b11] rounded-none sm:rounded-xl border-0 sm:border border-[#1f2937]/40 overflow-auto shadow-md 
+              ${showInfoPanel ? 'flex fixed inset-0 z-40 md:static md:z-auto' : 'hidden md:flex'}`}
           >
             {isLoading ? (
               <div className="flex-1 flex justify-center items-center">
@@ -1401,6 +1609,7 @@ const AdminConversationDetail = () => {
                 conversation={conversation}
                 onShowActionMenu={handleShowActionMenu}
                 isProcessing={isProcessing}
+                onClose={() => setShowInfoPanel(false)}
               />
             ) : null}
           </motion.div>
