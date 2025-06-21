@@ -23,13 +23,16 @@ import {
   MoreVertical,
   Info,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  ChevronDown,
+  Building2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { multiflowApi } from '../../services/multiflowApi';
 import { useAuthContext } from '../../hooks/useAuthContext';
 import { useSocket } from '../../contexts/SocketContext';
 import { cn } from "../../lib/utils";
+import { getEmpresaSetorInfo, getEmpresaColor } from '../../utils/empresaHelpers';
 
 import MessageBubble from '../../components/conversations/MessageBubble';
 import TypingIndicator from '../../components/conversations/TypingIndicator';
@@ -114,13 +117,18 @@ const ConversationHeader = React.memo(({
   onShowActionMenu,
   isRefreshing,
   onToggleInfoPanel,
-  isMobile
+  isMobile,
+  empresasComSetores
 }) => {
   if (!conversation) return null;
   
   const nomeCliente = conversation.nomeCliente || conversation.cliente?.nome || 'Cliente';
   const telefoneCliente = conversation.telefoneCliente || conversation.cliente?.telefone || '';
   const setorNome = getSetorNome(conversation);
+  
+  const empresaSetorInfo = getEmpresaSetorInfo(conversation, empresasComSetores);
+  const { empresa: empresaNome, empresaAbreviada } = empresaSetorInfo;
+  const empresaColor = getEmpresaColor(empresaNome);
   
   const initials = getInitials(nomeCliente);
   
@@ -172,13 +180,25 @@ const ConversationHeader = React.memo(({
         <div className="overflow-hidden min-w-0">
           <h3 className="text-white font-medium text-sm sm:text-base truncate">{nomeCliente}</h3>
           <div className="text-xs flex flex-wrap items-center gap-1 sm:gap-2 overflow-hidden">
-            <span className="text-slate-400 text-xs truncate hidden sm:inline">{telefoneCliente || 'Sem telefone'}</span>
+            {empresaNome && (
+              <div className="flex items-center gap-1">
+                <Building2 className="h-3 w-3 text-slate-400" />
+                <span className="text-slate-400" style={{ color: empresaColor?.color }}>
+                  {isMobile ? empresaAbreviada || empresaNome : empresaNome}
+                </span>
+                <span className="text-slate-400">•</span>
+              </div>
+            )}
+            <span className="text-slate-400 text-xs">{setorNome}</span>
+            {!isMobile && telefoneCliente && (
+              <>
+                <span className="text-slate-400">•</span>
+                <span className="text-slate-400 text-xs truncate">{telefoneCliente}</span>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-1 mt-1">
             {statusBadge}
-            
-            <Badge variant="outline" className="bg-[#101820] text-white border-[#1f2937]/50 text-xs truncate max-w-[120px]">
-              {setorNome}
-            </Badge>
-            
             {conversation.arquivada && (
               <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-xs">
                 Arquivada
@@ -518,13 +538,18 @@ const InfoPanel = React.memo(({
   onShowActionMenu,
   isProcessing,
   onClose,
-  isMobile
+  isMobile,
+  empresasComSetores
 }) => {
   if (!conversation) return null;
   
   const nomeCliente = conversation.nomeCliente || conversation.cliente?.nome || 'Cliente';
   const telefoneCliente = conversation.telefoneCliente || conversation.cliente?.telefone || '';
   const setorNome = getSetorNome(conversation);
+  
+  const empresaSetorInfo = getEmpresaSetorInfo(conversation, empresasComSetores);
+  const { empresa: empresaNome } = empresaSetorInfo;
+  const empresaColor = getEmpresaColor(empresaNome);
   
   return (
     <div className="p-3 sm:p-4 h-full overflow-auto">
@@ -584,6 +609,23 @@ const InfoPanel = React.memo(({
                 <span className="text-white">Não definido</span>
               )}
             </div>
+            
+            {empresaNome && (
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Empresa:</span>
+                <div 
+                  className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-sm font-medium"
+                  style={{ 
+                    backgroundColor: `${empresaColor?.color}20`, 
+                    color: empresaColor?.color,
+                    borderLeft: `2px solid ${empresaColor?.color}`
+                  }}
+                >
+                  <Building2 className="h-3 w-3" />
+                  <span>{empresaNome}</span>
+                </div>
+              </div>
+            )}
             
             <div className="flex items-center justify-between">
               <span className="text-slate-400">Setor:</span>
@@ -719,6 +761,9 @@ const TransferModal = ({
   isOpen, 
   onClose, 
   sectors, 
+  empresasComSetores,
+  expandedEmpresas,
+  toggleEmpresa,
   selectedSector, 
   setSelectedSector, 
   onConfirm, 
@@ -746,33 +791,91 @@ const TransferModal = ({
     >
       <div className="py-4">
         <RadioGroup value={localSelectedSector} onValueChange={setLocalSelectedSector}>
-          <div className="space-y-3 max-h-[40vh] overflow-auto px-1">
-            {sectors && sectors.length > 0 ? (
-              sectors.map(sector => (
-                <div key={sector._id || sector.id || sector.setorId} className="flex items-start space-x-2">
-                  <RadioGroupItem 
-                    value={sector.setorId || sector._id || sector.id} 
-                    id={`sector-${sector._id || sector.id || sector.setorId}`}
-                    className="mt-1 text-[#10b981] border-[#1f2937]/40"
-                  />
-                  <Label 
-                    htmlFor={`sector-${sector._id || sector.id || sector.setorId}`}
-                    className="flex-1 cursor-pointer text-white"
-                  >
-                    <div className="font-medium">{sector.nome}</div>
-                    {sector.responsavel && (
-                      <div className="text-sm text-slate-400">
-                        Responsável: {sector.responsavel}
+          <div className="space-y-3 max-h-[50vh] overflow-auto px-1">
+            {empresasComSetores && empresasComSetores.length > 0 ? (
+              empresasComSetores.map(({ empresa, setores }) => {
+                const empresaId = empresa._id || empresa.id || empresa.empresaId;
+                const isExpanded = expandedEmpresas[empresaId] !== false;
+                
+                return (
+                  <div key={empresaId} className="border border-[#1f2937]/40 rounded-lg bg-[#101820]/50">
+                    <button
+                      type="button"
+                      onClick={() => toggleEmpresa(empresaId)}
+                      className="w-full flex items-center justify-between p-3 hover:bg-[#101820] transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Building2 className="h-4 w-4 text-[#10b981]" />
+                        <span className="font-medium text-white">{empresa.nome}</span>
+                        <Badge variant="outline" className="bg-[#10b981]/10 text-[#10b981] border-[#10b981]/20 text-xs">
+                          {setores.length} setor{setores.length > 1 ? 'es' : ''}
+                        </Badge>
+                      </div>
+                      {isExpanded ? (
+                        <ChevronDown className="h-4 w-4 text-slate-400" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 text-slate-400" />
+                      )}
+                    </button>
+                    
+                    {isExpanded && (
+                      <div className="px-3 pb-3 space-y-2">
+                        {setores.map(setor => {
+                          const setorId = setor._id || setor.id || setor.setorId;
+                          return (
+                            <div key={setorId} className="flex items-start space-x-2 pl-6">
+                              <RadioGroupItem 
+                                value={setorId} 
+                                id={`sector-${setorId}`}
+                                className="mt-1 text-[#10b981] border-[#1f2937]/40"
+                              />
+                              <Label 
+                                htmlFor={`sector-${setorId}`}
+                                className="flex-1 cursor-pointer text-white hover:text-[#10b981] transition-colors"
+                              >
+                                <div className="font-medium">{setor.nome}</div>
+                                {setor.responsavel && (
+                                  <div className="text-sm text-slate-400">
+                                    Responsável: {setor.responsavel}
+                                  </div>
+                                )}
+                              </Label>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
-                  </Label>
-                </div>
-              ))
+                  </div>
+                );
+              })
             ) : (
-              <div className="text-center py-4">
-                <AlertCircle className="h-8 w-8 text-amber-500 mx-auto mb-2" />
-                <p className="text-slate-300">Nenhum setor disponível</p>
-              </div>
+              sectors && sectors.length > 0 ? (
+                sectors.map(sector => (
+                  <div key={sector._id || sector.id || sector.setorId} className="flex items-start space-x-2">
+                    <RadioGroupItem 
+                      value={sector.setorId || sector._id || sector.id} 
+                      id={`sector-${sector._id || sector.id || sector.setorId}`}
+                      className="mt-1 text-[#10b981] border-[#1f2937]/40"
+                    />
+                    <Label 
+                      htmlFor={`sector-${sector._id || sector.id || sector.setorId}`}
+                      className="flex-1 cursor-pointer text-white"
+                    >
+                      <div className="font-medium">{sector.nome}</div>
+                      {sector.responsavel && (
+                        <div className="text-sm text-slate-400">
+                          Responsável: {sector.responsavel}
+                        </div>
+                      )}
+                    </Label>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-4">
+                  <AlertCircle className="h-8 w-8 text-amber-500 mx-auto mb-2" />
+                  <p className="text-slate-300">Nenhum setor disponível</p>
+                </div>
+              )
             )}
           </div>
         </RadioGroup>
@@ -880,6 +983,8 @@ const EmployeeConversationDetail = () => {
   const [processingAction, setProcessingAction] = useState(null);
   const [error, setError] = useState(null);
   const [sectors, setSectors] = useState([]);
+  const [empresasComSetores, setEmpresasComSetores] = useState([]);
+  const [expandedEmpresas, setExpandedEmpresas] = useState({});
   const [selectedSector, setSelectedSector] = useState(null);
   const [showInfoPanel, setShowInfoPanel] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -998,6 +1103,58 @@ const EmployeeConversationDetail = () => {
     }).filter(Boolean);
   }, [selectedConversation]);
   
+  const fetchEmpresasComSetores = useCallback(async () => {
+    try {
+      console.log('Iniciando busca de empresas com setores usando novo endpoint...');
+      
+      const response = await multiflowApi.getEmpresasComSetores(
+        multiflowApi.ADMIN_ID, 
+        isAdmin,
+        { ativo: true, incluirVazias: false }
+      );
+      
+      if (response.success && response.data && response.data.length > 0) {
+        console.log(`Endpoint retornou ${response.data.length} empresas com setores`);
+        
+        const empresasComSetoresFiltradas = response.data.filter(
+          item => item.setores && item.setores.length > 0
+        );
+        
+        console.log(`${empresasComSetoresFiltradas.length} empresas têm setores`);
+        const empresasFormatadas = empresasComSetoresFiltradas.map(item => ({
+          empresa: {
+            _id: item._id,
+            id: item._id,
+            empresaId: item.empresaId,
+            nome: item.nome,
+            descricao: item.descricao,
+            ativo: item.ativo
+          },
+          setores: item.setores
+        }));
+        
+        setEmpresasComSetores(empresasFormatadas);
+        
+        const expandedState = {};
+        empresasFormatadas.forEach(item => {
+          const empresaId = item.empresa._id || item.empresa.empresaId;
+          expandedState[empresaId] = true;
+        });
+        setExpandedEmpresas(expandedState);
+        
+        const todosSetores = empresasComSetoresFiltradas.flatMap(item => item.setores);
+        setSectors(todosSetores);
+        
+        console.log(`Total de setores disponíveis: ${todosSetores.length}`);
+      } else {
+        console.log('Nenhuma empresa com setores encontrada, usando fallback para setores simples');
+        fetchSectors();
+      }
+    } catch (err) {
+      console.error('Erro ao buscar empresas com setores:', err);
+      fetchSectors();
+    }
+  }, [isAdmin]);  
   const fetchSectors = useCallback(async () => {
     try {
       setSectors([]);
@@ -1016,6 +1173,13 @@ const EmployeeConversationDetail = () => {
       toast.error('Falha ao carregar setores');
     }
   }, [isAdmin]);
+  
+  const toggleEmpresa = useCallback((empresaId) => {
+    setExpandedEmpresas(prev => ({
+      ...prev,
+      [empresaId]: !prev[empresaId]
+    }));
+  }, []);
   
   const handleSendMessage = async (e) => {
     e?.preventDefault();
@@ -1056,7 +1220,7 @@ const EmployeeConversationDetail = () => {
         });
     }
     
-    fetchSectors();
+    fetchEmpresasComSetores();
     
     if (messageInputRef.current) {
       messageInputRef.current.focus();
@@ -1065,7 +1229,7 @@ const EmployeeConversationDetail = () => {
     return () => {
       setError(null);
     };
-  }, [normalizedId, selectConversation, markMessagesAsRead, fetchSectors]);
+  }, [normalizedId, selectConversation, markMessagesAsRead, fetchEmpresasComSetores]);
   
   useEffect(() => {
     if (message && isConnected) {
@@ -1106,7 +1270,7 @@ const EmployeeConversationDetail = () => {
   const handleShowActionMenu = (action) => {
     switch (action) {
       case 'transferir':
-        fetchSectors();
+        fetchEmpresasComSetores();
         setSelectedSector(null);
         setShowTransferModal(true);
         break;
@@ -1263,6 +1427,9 @@ const EmployeeConversationDetail = () => {
             isOpen={showTransferModal}
             onClose={() => setShowTransferModal(false)}
             sectors={sectors}
+            empresasComSetores={empresasComSetores}
+            expandedEmpresas={expandedEmpresas}
+            toggleEmpresa={toggleEmpresa}
             selectedSector={selectedSector}
             setSelectedSector={setSelectedSector}
             onConfirm={handleConfirmTransfer}
@@ -1339,6 +1506,7 @@ const EmployeeConversationDetail = () => {
                   onShowActionMenu={handleShowActionMenu}
                   onToggleInfoPanel={handleToggleInfoPanel}
                   isMobile={isMobile}
+                  empresasComSetores={empresasComSetores}
                 />
                 
                 <div 
@@ -1408,6 +1576,7 @@ const EmployeeConversationDetail = () => {
                 isProcessing={isProcessing}
                 onClose={() => setShowInfoPanel(false)}
                 isMobile={isMobile}
+                empresasComSetores={empresasComSetores}
               />
             ) : null}
           </motion.div>

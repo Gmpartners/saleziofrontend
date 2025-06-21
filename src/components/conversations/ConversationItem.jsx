@@ -1,9 +1,10 @@
 import React from 'react';
-import { Check, CheckCheck, Clock } from 'lucide-react';
+import { Check, CheckCheck, Clock, Building2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Avatar, AvatarFallback } from "../../components/ui/avatar";
 import { Badge } from "../../components/ui/badge";
 import { useWindowSize } from '../../hooks/useWindowSize';
+import { getEmpresaSetorInfo, getEmpresaColor } from '../../utils/empresaHelpers';
 
 const STATUS = {
   AGUARDANDO: 'aguardando',
@@ -84,22 +85,6 @@ const getInitials = (name) => {
     .toUpperCase();
 };
 
-// Função aprimorada para obter o nome do setor de forma segura
-const getSetorNome = (conversation) => {
-  if (conversation?.setorInfo?.nome) return conversation.setorInfo.nome;
-  if (typeof conversation?.setorId === 'object' && conversation.setorId?.nome) return conversation.setorId.nome;
-  if (conversation?.setor?.nome) return conversation.setor.nome;
-  
-  const setorId = typeof conversation?.setorId === 'string' ? conversation.setorId : 
-                 (conversation?.setorId?._id || conversation?.setorId?.id || 'Não disponível');
-  
-  if (typeof setorId === 'string' && setorId.startsWith('SET')) {
-    return `S-${setorId.substring(3)}`;
-  }
-  
-  return setorId ? `S-${setorId}` : 'Não definido';
-};
-
 const getSetorColor = (setorName) => {
   if (!setorName) return null;
   
@@ -132,7 +117,7 @@ const getSetorColor = (setorName) => {
   };
 };
 
-const ConversationItem = ({ conversation, isSelected, onClick }) => {
+const ConversationItem = ({ conversation, isSelected, onClick, empresasComSetores = [] }) => {
   const { width } = useWindowSize();
   const isMobile = width < 768;
   
@@ -153,9 +138,10 @@ const ConversationItem = ({ conversation, isSelected, onClick }) => {
   const statusStyle = STATUS_STYLES[statusLower] || STATUS_STYLES[STATUS.ARQUIVADA];
   const statusLabel = STATUS_LABELS[statusLower] || "Desconhecido";
   
-  // Usar a função aprimorada para obter o nome do setor
-  const setorName = getSetorNome(conversation);
+  const empresaSetorInfo = getEmpresaSetorInfo(conversation, empresasComSetores);
+  const { setor: setorName, empresa: empresaNome, empresaAbreviada } = empresaSetorInfo;
   const setorColor = getSetorColor(setorName);
+  const empresaColor = getEmpresaColor(empresaNome);
   
   return (
     <div
@@ -189,7 +175,7 @@ const ConversationItem = ({ conversation, isSelected, onClick }) => {
       
       <div className="min-w-0 flex-1">
         <div className="flex justify-between items-start mb-1">
-          <div className="flex items-center space-x-2 max-w-[70%]">
+          <div className="flex items-center space-x-2 flex-1 overflow-hidden">
             <h3 className={cn(
               "font-medium truncate text-sm md:text-base",
               isSelected ? "text-white" : "text-slate-200",
@@ -198,22 +184,25 @@ const ConversationItem = ({ conversation, isSelected, onClick }) => {
               {nomeCliente || 'Cliente'}
             </h3>
             
-            {setorName && !isMobile && (
+            {!isMobile && empresaNome && empresaColor && (
               <div 
-                className="px-1.5 py-0.5 text-[10px] rounded-sm font-medium truncate max-w-[80px]"
+                className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded-sm font-medium"
                 style={{ 
-                  backgroundColor: `${setorColor?.color}20`, 
-                  color: setorColor?.color,
-                  borderLeft: `2px solid ${setorColor?.color}`
+                  backgroundColor: `${empresaColor.color}20`, 
+                  color: empresaColor.color,
+                  borderLeft: `2px solid ${empresaColor.color}`
                 }}
-                title={`Setor: ${setorName}`}
+                title={empresaNome}
               >
-                {setorName}
+                <Building2 className="h-2.5 w-2.5 flex-shrink-0" />
+                <span className="whitespace-nowrap">
+                  {empresaNome}
+                </span>
               </div>
             )}
           </div>
           
-          <div className="flex flex-col items-end">
+          <div className="flex flex-col items-end ml-2 flex-shrink-0">
             <span className="text-xs text-slate-400 whitespace-nowrap">
               {timestamp}
             </span>
@@ -237,40 +226,37 @@ const ConversationItem = ({ conversation, isSelected, onClick }) => {
             )}>
               {ultimaMensagem || 'Nenhuma mensagem'}
             </p>
-            
-            {/* Display setor badge em telas móveis */}
-            {setorName && isMobile && (
-              <Badge
-                variant="outline"
-                className="ml-1 text-[10px] py-0 h-5 px-1 truncate"
-                style={{ 
-                  backgroundColor: `${setorColor?.color}20`, 
-                  color: setorColor?.color,
-                  borderColor: `${setorColor?.color}35`
-                }}
-                title={`Setor: ${setorName}`}
-              >
-                {setorName}
-              </Badge>
-            )}
           </div>
           
-          <div className="flex items-center gap-1">
-            {/* Sempre mostrar o setor em uma badge dedicada */}
-            {setorName && !isMobile && (
+          <div className="flex items-center gap-1 flex-wrap justify-end">
+            {isMobile && empresaNome && empresaColor && (
               <Badge
                 variant="outline"
-                className="text-[10px] py-0 h-5 px-1.5 truncate shadow-sm"
+                className="text-[9px] py-0 h-4 px-1 truncate"
                 style={{ 
-                  backgroundColor: `${setorColor?.color}20`, 
-                  color: setorColor?.color,
-                  borderColor: `${setorColor?.color}35`
+                  backgroundColor: `${empresaColor.color}20`, 
+                  color: empresaColor.color,
+                  borderColor: `${empresaColor.color}35`
                 }}
-                title={`Setor: ${setorName}`}
+                title={empresaNome}
               >
-                {setorName}
+                <Building2 className="h-2.5 w-2.5 mr-0.5" />
+                {empresaAbreviada || empresaNome}
               </Badge>
             )}
+            
+            <Badge
+              variant="outline"
+              className="text-[10px] py-0 h-5 px-1 truncate"
+              style={{ 
+                backgroundColor: setorName === 'Não delegado' ? '#ff980020' : `${setorColor?.color}20`, 
+                color: setorName === 'Não delegado' ? '#ff9800' : setorColor?.color,
+                borderColor: setorName === 'Não delegado' ? '#ff980035' : `${setorColor?.color}35`
+              }}
+              title={`Setor: ${setorName}`}
+            >
+              {setorName}
+            </Badge>
             
             <Badge 
               variant="outline" 

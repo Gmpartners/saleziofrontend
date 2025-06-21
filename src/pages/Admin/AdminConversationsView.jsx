@@ -18,7 +18,10 @@ import {
   Archive,
   Phone,
   Video,
-  MoreVertical
+  MoreVertical,
+  ChevronDown,
+  ChevronRight,
+  Building2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { multiflowApi } from '../../services/multiflowApi';
@@ -176,6 +179,8 @@ const AdminConversationsView = () => {
   });
   const [dateRange, setDateRange] = useState({ from: undefined, to: undefined });
   const [sectors, setSectors] = useState([]);
+  const [empresasComSetores, setEmpresasComSetores] = useState([]);
+  const [expandedEmpresas, setExpandedEmpresas] = useState({});
   
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showFinishModal, setShowFinishModal] = useState(false);
@@ -293,6 +298,57 @@ const AdminConversationsView = () => {
       }
     };
   }, [pagination.current]);
+  
+  const fetchEmpresasComSetores = useCallback(async () => {
+    try {
+      if (!apiToken) {
+        return;
+      }
+      
+      console.log('Admin: Buscando empresas com setores usando novo endpoint...');
+      
+      // Usar o novo endpoint que retorna tudo em uma única chamada
+      const response = await multiflowApi.getEmpresasComSetores(
+        multiflowApi.ADMIN_ID,
+        true, // isAdmin
+        { ativo: true, incluirVazias: false }
+      );
+      
+      if (response.success && response.data && response.data.length > 0) {
+        console.log(`Admin: Endpoint retornou ${response.data.length} empresas com setores`);
+        
+        // Os dados já vêm no formato correto do backend
+        const empresasComSetoresFiltradas = response.data.filter(
+          item => item.setores && item.setores.length > 0
+        );
+        
+        console.log(`Admin: ${empresasComSetoresFiltradas.length} empresas têm setores`);
+        setEmpresasComSetores(empresasComSetoresFiltradas);
+        
+        // Expandir todas as empresas por padrão
+        const expandedState = {};
+        empresasComSetoresFiltradas.forEach(item => {
+          const empresaId = item._id || item.empresaId;
+          expandedState[empresaId] = true;
+        });
+        setExpandedEmpresas(expandedState);
+        
+        // Manter lista plana de setores para compatibilidade
+        const todosSetores = empresasComSetoresFiltradas.flatMap(item => item.setores);
+        setSectors(todosSetores);
+        
+        console.log(`Admin: Total de setores disponíveis: ${todosSetores.length}`);
+      } else {
+        // Fallback para busca simples de setores
+        console.log('Admin: Nenhuma empresa com setores encontrada, usando fallback');
+        fetchSectors();
+      }
+    } catch (err) {
+      console.error('Admin: Erro ao buscar empresas com setores:', err);
+      // Fallback para busca simples de setores
+      fetchSectors();
+    }
+  }, [apiToken]);
   
   const fetchSectors = useCallback(async () => {
     try {
@@ -512,9 +568,9 @@ const AdminConversationsView = () => {
   
   useEffect(() => {
     if (userProfile || user) {
-      fetchSectors();
+      fetchEmpresasComSetores();
     }
-  }, [fetchSectors, userProfile, user]);
+  }, [fetchEmpresasComSetores, userProfile, user]);
   
   useEffect(() => {
     if (userProfile || user) {
@@ -586,14 +642,14 @@ const AdminConversationsView = () => {
   };
   
   const handleShowTransferModal = useCallback(() => {
-    if (!selectedConversationId || !sectors || sectors.length === 0) {
+    if (!selectedConversationId || (empresasComSetores.length === 0 && sectors.length === 0)) {
       toast.error('Não há setores disponíveis para transferência');
       return;
     }
     
     setSelectedSector(null);
     setShowTransferModal(true);
-  }, [selectedConversationId, sectors]);
+  }, [selectedConversationId, empresasComSetores, sectors]);
   
   const handleShowFinishModal = useCallback(() => {
     if (!selectedConversationId) return;
@@ -699,6 +755,13 @@ const AdminConversationsView = () => {
       setProcessingAction(null);
     }
   }, [selectedConversationId, isProcessing, fetchConversations, pagination.current, performOperation]);
+  
+  const toggleEmpresa = (empresaId) => {
+    setExpandedEmpresas(prev => ({
+      ...prev,
+      [empresaId]: !prev[empresaId]
+    }));
+  };
   
   const getFilteredConversations = useMemo(() => {
     const allConversations = activeTab === 'completed' ? (completedConversations || []) : (conversations || []);
@@ -856,32 +919,100 @@ const AdminConversationsView = () => {
     }, { all: 0, awaiting: 0, ongoing: 0 });
   }, [conversations]);
   
-  const transferModalContent = useMemo(() => (
-    <RadioGroup value={selectedSector} onValueChange={setSelectedSector}>
-      <div className="space-y-3 max-h-[300px] overflow-auto">
-        {sectors && sectors.map(sector => (
-          <div key={sector._id || sector.id || sector.setorId} className="flex items-start space-x-2">
-            <RadioGroupItem 
-              value={sector._id || sector.id || sector.setorId} 
-              id={`sector-${sector._id || sector.id || sector.setorId}`}
-              className="mt-1 text-[#10b981] border-[#1f2937]/40"
-            />
-            <Label 
-              htmlFor={`sector-${sector._id || sector.id || sector.setorId}`}
-              className="flex-1 cursor-pointer text-white"
-            >
-              <div className="font-medium">{sector.nome}</div>
-              {sector.responsavel && (
-                <div className="text-sm text-slate-400">
-                  Responsável: {sector.responsavel}
+  const transferModalContent = useMemo(() => {
+    // Se temos empresas com setores agrupados, usar isso
+    if (empresasComSetores.length > 0) {
+      return (
+        <RadioGroup value={selectedSector} onValueChange={setSelectedSector}>
+          <div className="space-y-4 max-h-[400px] overflow-auto">
+            {empresasComSetores.map(({ empresa, setores }) => {
+              const empresaId = empresa._id || empresa.id || empresa.empresaId;
+              const isExpanded = expandedEmpresas[empresaId] !== false;
+              
+              return (
+                <div key={empresaId} className="border border-[#1f2937]/40 rounded-lg bg-[#101820]/50">
+                  <button
+                    type="button"
+                    onClick={() => toggleEmpresa(empresaId)}
+                    className="w-full flex items-center justify-between p-3 hover:bg-[#101820] transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Building2 className="h-4 w-4 text-[#10b981]" />
+                      <span className="font-medium text-white">{empresa.nome}</span>
+                      <Badge variant="outline" className="bg-[#10b981]/10 text-[#10b981] border-[#10b981]/20 text-xs">
+                        {setores.length} setor{setores.length > 1 ? 'es' : ''}
+                      </Badge>
+                    </div>
+                    {isExpanded ? (
+                      <ChevronDown className="h-4 w-4 text-slate-400" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-slate-400" />
+                    )}
+                  </button>
+                  
+                  {isExpanded && (
+                    <div className="px-3 pb-3 space-y-2">
+                      {setores.map(setor => {
+                        const setorId = setor._id || setor.id || setor.setorId;
+                        return (
+                          <div key={setorId} className="flex items-start space-x-2 pl-6">
+                            <RadioGroupItem 
+                              value={setorId} 
+                              id={`sector-${setorId}`}
+                              className="mt-1 text-[#10b981] border-[#1f2937]/40"
+                            />
+                            <Label 
+                              htmlFor={`sector-${setorId}`}
+                              className="flex-1 cursor-pointer text-white hover:text-[#10b981] transition-colors"
+                            >
+                              <div className="font-medium">{setor.nome}</div>
+                              {setor.responsavel && (
+                                <div className="text-sm text-slate-400">
+                                  Responsável: {setor.responsavel}
+                                </div>
+                              )}
+                            </Label>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              )}
-            </Label>
+              );
+            })}
           </div>
-        ))}
-      </div>
-    </RadioGroup>
-  ), [sectors, selectedSector]);
+        </RadioGroup>
+      );
+    }
+    
+    // Fallback para lista simples de setores
+    return (
+      <RadioGroup value={selectedSector} onValueChange={setSelectedSector}>
+        <div className="space-y-3 max-h-[300px] overflow-auto">
+          {sectors && sectors.map(sector => (
+            <div key={sector._id || sector.id || sector.setorId} className="flex items-start space-x-2">
+              <RadioGroupItem 
+                value={sector._id || sector.id || sector.setorId} 
+                id={`sector-${sector._id || sector.id || sector.setorId}`}
+                className="mt-1 text-[#10b981] border-[#1f2937]/40"
+              />
+              <Label 
+                htmlFor={`sector-${sector._id || sector.id || sector.setorId}`}
+                className="flex-1 cursor-pointer text-white"
+              >
+                <div className="font-medium">{sector.nome}</div>
+                {sector.responsavel && (
+                  <div className="text-sm text-slate-400">
+                    Responsável: {sector.responsavel}
+                  </div>
+                )}
+              </Label>
+            </div>
+          ))}
+        </div>
+      </RadioGroup>
+    );
+  }, [empresasComSetores, sectors, selectedSector, expandedEmpresas]);
   
   return (
     <div className="h-full w-full flex flex-col bg-[#070b11] relative">
@@ -1117,7 +1248,7 @@ const AdminConversationsView = () => {
       </div>
       
       <Dialog open={showTransferModal} onOpenChange={setShowTransferModal}>
-        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
+        <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white max-w-2xl">
           <DialogHeader>
             <DialogTitle>Transferir conversa</DialogTitle>
             <DialogDescription className="text-slate-400">

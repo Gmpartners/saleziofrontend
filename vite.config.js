@@ -8,5 +8,21 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src')
     }
+  },
+  server: {
+    proxy: {
+      '/api': {
+        target: 'https://multi.compracomsegurancaeconfianca.com',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path
+      },
+      '/socket.io': {
+        target: 'https://multi.compracomsegurancaeconfianca.com',
+        changeOrigin: true,
+        secure: false,
+        ws: true
+      }
+    }
   }
 })

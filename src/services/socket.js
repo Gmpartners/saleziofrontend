@@ -49,6 +49,8 @@ class SocketService {
     this.notifyObservers('connectionState', this.connectionState);
 
     const token = localStorage.getItem('apiToken') || import.meta.env.VITE_API_TOKEN || '';
+    const userId = localStorage.getItem('userId') || null;
+    const userRole = localStorage.getItem('userRole') || 'agent';
 
     this.socket = io(this.serverUrl, {
       reconnection: true,
@@ -61,12 +63,16 @@ class SocketService {
       auth: {
         token: token,
         clientType: 'atendente',
-        appVersion: '1.0.0'
+        appVersion: '1.0.0',
+        userId: userId,
+        role: userRole
       },
       query: {
         clientType: 'atendente',
         appVersion: '1.0.0',
-        token: token
+        token: token,
+        userId: userId,
+        role: userRole
       }
     });
 
@@ -358,6 +364,16 @@ class SocketService {
     }
 
     console.log(`Autenticando usuário no socket: ${userId}`);
+    
+    // Atualizar auth do socket
+    if (this.socket.io.opts) {
+      this.socket.io.opts.auth = {
+        ...this.socket.io.opts.auth,
+        userId: userId,
+        role: userProfile?.role || 'agent'
+      };
+    }
+    
     this.socket.emit('authenticate', {
       userId: userId,
       isAdmin: userProfile?.role === 'admin',

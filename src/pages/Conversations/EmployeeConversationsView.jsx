@@ -335,7 +335,8 @@ const VirtualizedConversationList = React.memo(({
   conversations, 
   selectedConversationId, 
   onSelectConversation,
-  logger
+  logger,
+  empresasComSetores
 }) => {
   const itemSize = 80;
   
@@ -354,10 +355,11 @@ const VirtualizedConversationList = React.memo(({
             onSelectConversation(conversation.conversaId || conversation._id);
           }}
           isTyping={conversation.isTyping}
+          empresasComSetores={empresasComSetores}
         />
       </div>
     );
-  }, [conversations, selectedConversationId, onSelectConversation, logger]);
+  }, [conversations, selectedConversationId, onSelectConversation, logger, empresasComSetores]);
   
   if (conversations.length === 0) {
     return null;
@@ -727,7 +729,7 @@ const SearchAndFilterBar = React.memo(({
         <div className="relative flex-1">
           <Input
             type="text"
-            placeholder="Buscar conversas..."
+            placeholder={isMobile ? "Buscar..." : "Buscar conversas..."}
             value={searchTerm}
             onChange={handleSearch}
             className="w-full pl-10 bg-[#101820] border-[#1f2937]/40 focus-visible:ring-[#10b981]/30 focus-visible:border-[#10b981]/50 rounded-lg text-white placeholder:text-slate-400/70"
@@ -1255,15 +1257,8 @@ const EmployeeConversationsView = () => {
     typingUsers
   } = useSocket();
   
-  // Força re-renderização
   const [forceUpdate, setForceUpdate] = useState(0);
-  
-  // Auto-refresh interval
-  const autoRefreshRef = useRef(null);
-  const lastRefreshTimeRef = useRef(Date.now());
-  
-  // Configuração para auto-refresh
-  const AUTO_REFRESH_INTERVAL = 15000; // 15 segundos
+  const [empresasComSetores, setEmpresasComSetores] = useState([]);
   
   useEffect(() => {
     logger.debug('Estado do contexto Socket', { 
@@ -1302,88 +1297,26 @@ const EmployeeConversationsView = () => {
   const [isMobile, setIsMobile] = useState(false);
   const [showFilterSheet, setShowFilterSheet] = useState(false);
   
-  // Configurar auto-refresh para obter novas mensagens
-  useEffect(() => {
-    // Iniciar auto-refresh
-    autoRefreshRef.current = setInterval(() => {
-      // Apenas atualizar se o último refresh foi há mais de AUTO_REFRESH_INTERVAL
-      if (Date.now() - lastRefreshTimeRef.current > AUTO_REFRESH_INTERVAL) {
-        // Não mostrar indicador de carregamento para refresh de fundo
-        handleSilentRefresh();
-      }
-    }, AUTO_REFRESH_INTERVAL);
-    
-    // Parar refresh ao desmontar
-    return () => {
-      if (autoRefreshRef.current) {
-        clearInterval(autoRefreshRef.current);
-      }
-    };
-  }, []);
-  
-  // Função para refresh silencioso (sem UI loading)
-  const handleSilentRefresh = useCallback(async () => {
-    logger.debug('Executando refresh silencioso');
-    
-    try {
-      if (activeTab === 'completed') {
-        await refreshCompletedConversations({
-          status: STATUS.FINALIZADA,
-          arquivada: filters.arquivada,
-          forceRefresh: true,
-          silent: true
-        });
-      } else {
-        const statusFilters = [];
-        
-        if (activeTab === 'all') {
-          statusFilters.push(STATUS.AGUARDANDO, STATUS.EM_ANDAMENTO);
-        } else if (activeTab === 'waiting') {
-          statusFilters.push(STATUS.AGUARDANDO);
-        } else if (activeTab === 'ongoing') {
-          statusFilters.push(STATUS.EM_ANDAMENTO);
-        }
-        
-        await refreshConversations({
-          status: statusFilters,
-          arquivada: filters.arquivada,
-          forceRefresh: true,
-          silent: true
-        });
-      }
-      
-      // Atualizar timestamp de último refresh
-      lastRefreshTimeRef.current = Date.now();
-      
-      // Forçar re-renderização se algo mudou
-      setForceUpdate(prev => prev + 1);
-      
-    } catch (error) {
-      logger.error('Erro no refresh silencioso', error);
-    }
-  }, [activeTab, filters.arquivada, refreshConversations, refreshCompletedConversations, logger]);
-  
-  // Adicionar listener para novas mensagens (usando onNewMessage do SocketContext)
+  // Registrar callback para nova mensagem - CORREÇÃO APLICADA AQUI
   useEffect(() => {
     if (onNewMessage) {
-      const handleNewMessage = () => {
-        // Ao receber nova mensagem, atualizar em até 2 segundos
-        setTimeout(() => {
-          handleSilentRefresh();
-        }, 1000);
-      };
+      const unsubscribe = onNewMessage((data) => {
+        logger.debug('Nova mensagem recebida via callback', { 
+          conversationId: data.conversaId,
+          messagePreview: data.mensagem?.conteudo?.substring(0, 50) 
+        });
+        
+        // CORREÇÃO: Forçar atualização da UI quando nova mensagem chegar
+        setForceUpdate(prev => prev + 1);
+      });
       
-      // Adicionar handler
-      onNewMessage(handleNewMessage);
-      
-      // Cleanup
       return () => {
-        if (onNewMessage.off) {
-          onNewMessage.off(handleNewMessage);
+        if (unsubscribe) {
+          unsubscribe();
         }
       };
     }
-  }, [onNewMessage, handleSilentRefresh]);
+  }, [onNewMessage, logger]);
   
   useEffect(() => {
     const checkMobile = () => {
@@ -1443,7 +1376,7 @@ const EmployeeConversationsView = () => {
   }, [sectors, userProfile, isAdmin, logger]);
   
   const unreadCounts = useMemo(() => {
-    if (!conversations) return { all: 0, awaiting: 0, ongoing: 0 };
+    if (!conversations) return { all: 0, awaiting: 0, ongoing: 0, notDelegated: 0 };
     
     return conversations.reduce((counts, conv) => {
       const unreadCount = conv.unreadCount || 0;
@@ -1457,8 +1390,8 @@ const EmployeeConversationsView = () => {
       }
       
       return counts;
-    }, { all: 0, awaiting: 0, ongoing: 0 });
-  }, [conversations]);
+    }, { all: 0, awaiting: 0, ongoing: 0, notDelegated: 0 });
+  }, [conversations, forceUpdate]); // forceUpdate como dependência para garantir re-cálculo
   
   useEffect(() => {
     if (unreadCounts.all > 0) {
@@ -1475,8 +1408,32 @@ const EmployeeConversationsView = () => {
     return result;
   }, [activeTab, conversations, completedConversations, logger, forceUpdate]);
   
+  const fetchEmpresasComSetores = useCallback(async () => {
+    try {
+      logger.info('Buscando empresas com setores');
+      
+      const response = await multiflowApi.getEmpresasComSetores(
+        multiflowApi.ADMIN_ID, 
+        isAdmin,
+        { ativo: true, incluirVazias: false }
+      );
+      
+      if (response.success && response.data && response.data.length > 0) {
+        logger.info(`${response.data.length} empresas com setores encontradas`);
+        setEmpresasComSetores(response.data);
+      } else {
+        logger.warn('Nenhuma empresa com setores encontrada');
+        setEmpresasComSetores([]);
+      }
+    } catch (err) {
+      logger.error('Erro ao buscar empresas com setores:', err);
+      setEmpresasComSetores([]);
+    }
+  }, [isAdmin, logger]);
+  
   useEffect(() => {
     fetchSectors();
+    fetchEmpresasComSetores();
   }, []);
   
   useEffect(() => {
@@ -1552,7 +1509,7 @@ const EmployeeConversationsView = () => {
     logger.info('Mudança de aba solicitada', { deAba: activeTab, paraAba: value });
     
     setActiveTab(value);
-    clearUnreadMessages();
+    // CORREÇÃO: Removido clearUnreadMessages() daqui
     setError(null);
     setIsRefreshing(true);
     
@@ -1598,7 +1555,7 @@ const EmployeeConversationsView = () => {
     } finally {
       setIsRefreshing(false);
     }
-  }, [filters.arquivada, clearUnreadMessages, refreshCompletedConversations, refreshConversations, activeTab, logger]);
+  }, [filters.arquivada, refreshCompletedConversations, refreshConversations, activeTab, logger]);
   
   const handleSearch = useMemo(() => debounce(async (term) => {
     const searchStart = logger.markPerformance('search');
@@ -1747,9 +1704,6 @@ const EmployeeConversationsView = () => {
           forceRefresh: true
         });
       }
-      
-      // Atualizar timestamp de último refresh
-      lastRefreshTimeRef.current = Date.now();
       
       const duration = logger.measurePerformance(null, 'refresh');
       logger.info('Atualização concluída com sucesso', { 
@@ -2170,6 +2124,7 @@ const EmployeeConversationsView = () => {
           selectedConversationId={selectedConversationId}
           onSelectConversation={handleSelectConversation}
           logger={logger}
+          empresasComSetores={empresasComSetores}
         />
       </div>
     );
@@ -2182,7 +2137,8 @@ const EmployeeConversationsView = () => {
     selectedConversationId, 
     handleSelectConversation,
     logger,
-    forceUpdate
+    forceUpdate,
+    empresasComSetores
   ]);
   
   return (

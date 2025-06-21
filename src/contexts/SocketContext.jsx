@@ -35,6 +35,9 @@ export const SocketProvider = ({ children }) => {
     pages: 1
   });
   
+  // Callback para notificar sobre novas mensagens
+  const [onNewMessageCallback, setOnNewMessageCallback] = useState(null);
+  
   const refs = {
     selectedConversationId: useRef(null),
     appFocused: useRef(document.hasFocus()),
@@ -234,12 +237,16 @@ export const SocketProvider = ({ children }) => {
   }, []);
   
   const refreshConversations = useCallback(async (filters = {}) => {
-    if (refs.isRefreshing.current) {
+    if (refs.isRefreshing.current && !filters.forceRefresh) {
       return false;
     }
     
     refs.isRefreshing.current = true;
-    setIsLoading(true);
+    
+    // Não mostrar loading se for silent refresh
+    if (!filters.silent) {
+      setIsLoading(true);
+    }
     
     try {
       const isAdminUser = userProfile?.role === 'admin' || isAdmin;
@@ -250,7 +257,9 @@ export const SocketProvider = ({ children }) => {
         arquivada: false,
         page: pagination.page,
         limit: pagination.limit,
-        forceRefresh: true
+        forceRefresh: true,
+        // CORREÇÃO: Adicionar fields para incluir ultimaMensagem
+        fields: 'conversaId,_id,nomeCliente,telefone,status,setorId,empresaId,atendenteId,ultimaAtividade,ultimaMensagem,unreadCount,created,arquivada'
       };
       
       const mergedFilters = { ...defaultFilters, ...filters };
@@ -272,7 +281,8 @@ export const SocketProvider = ({ children }) => {
         }
       }
       
-      if (mergedFilters.status !== STATUS.FINALIZADA) {
+      // Não limpar conversas se for silent refresh
+      if (!filters.silent && mergedFilters.status !== STATUS.FINALIZADA) {
         setConversations([]);
       }
       
@@ -305,7 +315,9 @@ export const SocketProvider = ({ children }) => {
       };
     } finally {
       refs.isRefreshing.current = false;
-      setIsLoading(false);
+      if (!filters.silent) {
+        setIsLoading(false);
+      }
     }
   }, [userProfile, isAdmin, pagination, normalizeSetorId, sortConversationsByActivity, enrichConversationsWithSectorData]);
 
@@ -321,7 +333,9 @@ export const SocketProvider = ({ children }) => {
         arquivada: false,
         page: pagination.page,
         limit: pagination.limit,
-        forceRefresh: true
+        forceRefresh: true,
+        // CORREÇÃO: Adicionar fields para incluir ultimaMensagem
+        fields: 'conversaId,_id,nomeCliente,telefone,status,setorId,empresaId,atendenteId,ultimaAtividade,ultimaMensagem,unreadCount,created,arquivada'
       };
       
       const mergedFilters = { ...defaultFilters, ...filters };
@@ -894,7 +908,8 @@ export const SocketProvider = ({ children }) => {
   }, [completedConversations]);
   
   useEffect(() => {
-    socketService.initialize('/');
+    // Inicializar socket sem parâmetro para usar a URL do .env
+    socketService.initialize();
     return () => {
       socketService.disconnect();
     };
@@ -1009,29 +1024,34 @@ export const SocketProvider = ({ children }) => {
     setConversations(prev => {
       const updatedConversations = prev.map(conv => {
         if (conv.conversaId === conversationId || conv._id === conversationId) {
+          const isWindowFocused = refs.appFocused.current;
+          const shouldIncrementUnread = !isCurrentConversation || !isWindowFocused;
+          
           return {
             ...conv,
             ultimaMensagem: data.mensagem.conteudo,
             ultimaAtividade: data.mensagem.timestamp || new Date().toISOString(),
-            unreadCount: (!isCurrentConversation || !refs.appFocused.current) 
-              ? (conv.unreadCount || 0) + 1 
-              : conv.unreadCount || 0,
-            hasNewMessage: (!isCurrentConversation || !refs.appFocused.current)
+            unreadCount: shouldIncrementUnread ? (conv.unreadCount || 0) + 1 : 0,
+            hasNewMessage: shouldIncrementUnread
           };
         }
         return conv;
       });
       
-      if (!updatedConversations.some(c => 
+      // Se a conversa não existe na lista, não fazer refresh completo
+      const conversationExists = updatedConversations.some(c => 
         (c.conversaId === conversationId || c._id === conversationId)
-      )) {
-        refreshConversations({ forceRefresh: true });
+      );
+      
+      if (!conversationExists) {
+        // Apenas adicionar a nova conversa sem recarregar tudo
+        console.log('Nova conversa detectada, buscando dados...');
         return prev;
       }
       
       return sortConversationsByActivity(updatedConversations);
     });
-  }, [refreshConversations, sortConversationsByActivity]);
+  }, [sortConversationsByActivity]);
   
   const updateSelectedConversationWithNewMessage = useCallback((data) => {
     setSelectedConversation(prev => {
@@ -1071,7 +1091,12 @@ export const SocketProvider = ({ children }) => {
     }
     
     updateConversationsWithNewMessage(data, isCurrentConversation);
-  }, [handleUnreadMessage, updateConversationsWithNewMessage]);
+    
+    // Notificar callback se houver
+    if (onNewMessageCallback) {
+      onNewMessageCallback(data);
+    }
+  }, [handleUnreadMessage, updateConversationsWithNewMessage, onNewMessageCallback]);
   
   const processConversationUpdate = useCallback((data) => {
     if (!data || !data._id) return;
@@ -1100,14 +1125,32 @@ export const SocketProvider = ({ children }) => {
     }
   }, []);
   
-  const processNewConversation = useCallback((data) => {
+  const processNewConversation = useCallback(async (data) => {
     if (!data || !data._id) return;
 
-    refreshConversations({
-      forceRefresh: true
-    });
-   
-  }, [refreshConversations]);
+    try {
+      // Buscar apenas a nova conversa específica
+      const isAdminUser = userProfile?.role === 'admin' || isAdmin;
+      const userId = multiflowApi.ADMIN_ID;
+      
+      const response = await multiflowApi.getConversa(data._id, userId, false, isAdminUser);
+      
+      if (response.success && response.data) {
+        const enrichedConversation = await enrichConversationWithSectorData(response.data);
+        
+        setConversations(prev => {
+          // Verificar se a conversa já existe
+          const exists = prev.some(c => c._id === data._id || c.conversaId === data._id);
+          if (exists) return prev;
+          
+          // Adicionar nova conversa no início da lista
+          return sortConversationsByActivity([enrichedConversation, ...prev]);
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao buscar nova conversa:', error);
+    }
+  }, [userProfile, isAdmin, enrichConversationWithSectorData, sortConversationsByActivity]);
   
   const processConversationFinalized = useCallback((data) => {
     if (!data || !data._id) return;
@@ -1155,7 +1198,7 @@ export const SocketProvider = ({ children }) => {
     
     if (!refs.selectedConversationId.current) return;
     
-    if (timeSinceLastUpdate >= 10000 && !refs.isRefreshing.current) {
+    if (timeSinceLastUpdate >= 60000 && !refs.isRefreshing.current) { // Mudado de 10s para 60s
       await refreshCurrentConversationFromApi();
     }
   }, []);
@@ -1208,7 +1251,7 @@ export const SocketProvider = ({ children }) => {
       clearInterval(refs.updateInterval.current);
     }
     
-    refs.updateInterval.current = setInterval(updateCurrentConversation, 1000);
+    refs.updateInterval.current = setInterval(updateCurrentConversation, 5000); // Mudado de 1s para 5s
     
     return () => {
       if (refs.updateInterval.current) {
@@ -1250,6 +1293,15 @@ export const SocketProvider = ({ children }) => {
     }
   }, [toastNotification, closeToast]);
   
+  // Função para registrar callback de nova mensagem
+  const onNewMessage = useCallback((callback) => {
+    setOnNewMessageCallback(() => callback);
+    
+    return () => {
+      setOnNewMessageCallback(null);
+    };
+  }, []);
+  
   const value = {
     isConnected,
     isLoading,
@@ -1258,7 +1310,6 @@ export const SocketProvider = ({ children }) => {
     selectedConversation,
     hasUnreadMessages,
     typingUsers,
-
     toastNotification,
     pagination,
     closeToast,
@@ -1275,6 +1326,7 @@ export const SocketProvider = ({ children }) => {
     finishConversation,
     archiveConversation,
     markMessagesAsRead,
+    onNewMessage, // Exportar a função para registrar callback
     isAdmin: userProfile?.role === 'admin' || isAdmin,
     userProfile
   };

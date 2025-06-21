@@ -781,6 +781,42 @@ class MultiflowApiService {
     }
   }
 
+  async getEmpresasComSetores(userId = this.ADMIN_ID, isAdmin = false, options = {}) {
+    try {
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      // Parâmetros opcionais do endpoint
+      if (options.ativo !== undefined) {
+        params.ativo = options.ativo;
+      }
+      if (options.incluirVazias !== undefined) {
+        params.incluirVazias = options.incluirVazias;
+      }
+      
+      const response = await this.get(`/users/${userId}/empresas-com-setores`, { params });
+      
+      if (response.success) {
+        console.log(`Endpoint empresas-com-setores retornou ${response.data.length} empresas`);
+        if (response.metadata) {
+          console.log(`Total: ${response.metadata.totalEmpresas} empresas, ${response.metadata.totalSetores} setores`);
+        }
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('getEmpresasComSetores', error, {userId, isAdmin, options});
+      return {
+        success: false,
+        error: error.message,
+        data: []
+      };
+    }
+  }
+
   async getSetores(userId = this.ADMIN_ID, isAdmin = false, allUsers = false) {
     try {
       const params = {};
@@ -823,6 +859,78 @@ class MultiflowApiService {
     }
   }
 
+  async getSetorById(setorId, userId = this.ADMIN_ID, isAdmin = false) {
+    try {
+      if (!setorId) {
+        return {
+          success: false,
+          error: 'ID do setor não fornecido'
+        };
+      }
+      
+      setorId = this.normalizeId(setorId, 'setor');
+      
+      const cacheKey = `setor-${setorId}`;
+      const cachedSetor = this.setorDetailsCache.get(cacheKey);
+      
+      if (cachedSetor && this.isCacheValid(cachedSetor, this.cacheDuration.medium)) {
+        return {
+          success: true,
+          data: cachedSetor.data
+        };
+      }
+      
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      const response = await this.get(`/users/${userId}/setores/${setorId}`, { params });
+      
+      if (response.success && response.data) {
+        this.setorDetailsCache.set(cacheKey, {
+          data: response.data,
+          timestamp: Date.now()
+        });
+      }
+      
+      return response;
+    } catch (error) {
+      const cacheKey = `setor-${setorId}`;
+      const cachedSetor = this.setorDetailsCache.get(cacheKey);
+      
+      if (cachedSetor) {
+        return {
+          success: true,
+          data: cachedSetor.data,
+          fromCache: true,
+          error: error.message
+        };
+      }
+      
+      this.logError('getSetorById', error, {setorId, userId, isAdmin});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  getConversaId(id) {
+    if (!id) return null;
+    
+    if (typeof id === 'object') {
+      if (id.conversaId) return id.conversaId.toString();
+      if (id._id) return id._id.toString();
+      if (id.id) return id.id.toString();
+      return null;
+    }
+    
+    return id.toString();
+  }
+
   normalizeId(id, type = 'generic') {
     if (!id) return null;
     
@@ -855,6 +963,393 @@ class MultiflowApiService {
     }
     
     return id.toString();
+  }
+
+  async getConversas(filters = {}, userId = this.ADMIN_ID, isAdmin = false) {
+    try {
+      const cacheKey = filters.status?.includes('finalizada') ? 'conversasFinalizadas' : 'conversas';
+      
+      if (!filters.forceRefresh && this.isCacheValid(this.cache[cacheKey], this.cacheDuration.short)) {
+        const cachedData = this.cache[cacheKey].data;
+        
+        if (filters.setorId) {
+          const filteredData = cachedData.filter(conv => conv.setorId === filters.setorId);
+          return {
+            success: true,
+            data: filteredData,
+            fromCache: true
+          };
+        }
+        
+        return {
+          success: true,
+          data: cachedData,
+          fromCache: true
+        };
+      }
+      
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      if (filters.status) {
+        params.status = Array.isArray(filters.status) ? filters.status.join(',') : filters.status;
+      }
+      if (filters.arquivada !== undefined) {
+        params.arquivada = filters.arquivada;
+      }
+      if (filters.search) {
+        params.busca = filters.search;
+      }
+      if (filters.setorId) {
+        params.setorId = filters.setorId;
+      }
+      if (filters.empresaId) {
+        params.empresaId = filters.empresaId;
+      }
+      if (filters.atendenteId) {
+        params.atendenteId = filters.atendenteId;
+      }
+      if (filters.page) {
+        params.pagina = filters.page;
+      }
+      if (filters.limit) {
+        params.limite = filters.limit;
+      }
+      if (filters.dataInicio) {
+        params.dataInicio = filters.dataInicio;
+      }
+      if (filters.dataFim) {
+        params.dataFim = filters.dataFim;
+      }
+      if (filters.fields) {
+        params.fields = filters.fields;
+      }
+      if (filters.allUsers) {
+        params.allUsers = 'true';
+      }
+      
+      const response = await this.get(`/users/${userId}/conversas`, { params });
+      
+      if (response.success && Array.isArray(response.data)) {
+        this.updateCache(cacheKey, response.data);
+      }
+      
+      return response;
+    } catch (error) {
+      const cacheKey = filters.status?.includes('finalizada') ? 'conversasFinalizadas' : 'conversas';
+      
+      if (this.cache[cacheKey].data) {
+        return {
+          success: true,
+          data: this.cache[cacheKey].data,
+          fromCache: true,
+          error: error.message
+        };
+      }
+      
+      this.logError('getConversas', error, {userId, isAdmin, filters});
+      return {
+        success: false,
+        error: error.message,
+        data: []
+      };
+    }
+  }
+
+  async getConversa(conversaId, userId = this.ADMIN_ID, incluirMensagens = true, isAdmin = false) {
+    try {
+      if (!conversaId) {
+        return {
+          success: false,
+          error: 'ID da conversa não fornecido'
+        };
+      }
+      
+      conversaId = this.normalizeId(conversaId, 'conversa');
+      
+      const cacheKey = `conversa-${conversaId}`;
+      const cachedConversa = this.conversationDetailsCache.get(cacheKey);
+      
+      if (!incluirMensagens && cachedConversa && this.isCacheValid(cachedConversa, this.cacheDuration.short)) {
+        return {
+          success: true,
+          data: cachedConversa.data
+        };
+      }
+      
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      if (incluirMensagens) {
+        params.incluirMensagens = 'true';
+      }
+      
+      const response = await this.get(`/users/${userId}/conversas/${conversaId}`, { params });
+      
+      if (response.success && response.data) {
+        this.conversationDetailsCache.set(cacheKey, {
+          data: response.data,
+          timestamp: Date.now()
+        });
+      }
+      
+      return response;
+    } catch (error) {
+      const cacheKey = `conversa-${conversaId}`;
+      const cachedConversa = this.conversationDetailsCache.get(cacheKey);
+      
+      if (cachedConversa) {
+        return {
+          success: true,
+          data: cachedConversa.data,
+          fromCache: true,
+          error: error.message
+        };
+      }
+      
+      this.logError('getConversa', error, {conversaId, userId, isAdmin});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  async enviarMensagem(conversaId, conteudo, userId = this.ADMIN_ID, tipo = 'texto', isAdmin = false) {
+    try {
+      if (!conversaId || !conteudo) {
+        return {
+          success: false,
+          error: 'ID da conversa e conteúdo são obrigatórios'
+        };
+      }
+      
+      conversaId = this.normalizeId(conversaId, 'conversa');
+      
+      const payload = {
+        conteudo: conteudo.trim(),
+        tipo: tipo
+      };
+      
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      const response = await this.post(`/users/${userId}/conversas/${conversaId}/mensagens`, payload, { params });
+      
+      if (response.success) {
+        const cacheKey = `conversa-${conversaId}`;
+        this.conversationDetailsCache.delete(cacheKey);
+        this.updateCache('conversas', null);
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('enviarMensagem', error, {conversaId, userId, isAdmin});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  async markConversationAsRead(conversaId, userId = this.ADMIN_ID, isAdmin = false) {
+    try {
+      if (!conversaId) {
+        return {
+          success: false,
+          error: 'ID da conversa não fornecido'
+        };
+      }
+      
+      conversaId = this.normalizeId(conversaId, 'conversa');
+      
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      const response = await this.put(`/users/${userId}/conversas/${conversaId}/ler`, {}, { params });
+      
+      if (response.success) {
+        const cacheKey = `conversa-${conversaId}`;
+        this.conversationDetailsCache.delete(cacheKey);
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('markConversationAsRead', error, {conversaId, userId, isAdmin});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  async updateStatus(conversaId, novoStatus, userId = this.ADMIN_ID, atendenteId = null, isAdmin = false) {
+    try {
+      if (!conversaId || !novoStatus) {
+        return {
+          success: false,
+          error: 'ID da conversa e novo status são obrigatórios'
+        };
+      }
+      
+      conversaId = this.normalizeId(conversaId, 'conversa');
+      
+      const payload = {
+        status: novoStatus
+      };
+      
+      if (atendenteId) {
+        payload.atendenteId = atendenteId;
+      }
+      
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      const response = await this.put(`/users/${userId}/conversas/${conversaId}/status`, payload, { params });
+      
+      if (response.success) {
+        const cacheKey = `conversa-${conversaId}`;
+        this.conversationDetailsCache.delete(cacheKey);
+        this.updateCache('conversas', null);
+        this.updateCache('conversasFinalizadas', null);
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('updateStatus', error, {conversaId, novoStatus, userId, isAdmin});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  async transferirConversa(conversaId, setorDestinoId, userId = this.ADMIN_ID, motivo = '', isAdmin = false) {
+    try {
+      if (!conversaId || !setorDestinoId) {
+        return {
+          success: false,
+          error: 'ID da conversa e setor destino são obrigatórios'
+        };
+      }
+      
+      conversaId = this.normalizeId(conversaId, 'conversa');
+      
+      // Usando o endpoint novo e payload correto
+      const payload = {
+        setorId: setorDestinoId
+      };
+      
+      const response = await this.post(`/conversas/${conversaId}/transferir`, payload);
+      
+      if (response.success) {
+        const cacheKey = `conversa-${conversaId}`;
+        this.conversationDetailsCache.delete(cacheKey);
+        this.updateCache('conversas', null);
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('transferirConversa', error, {conversaId, setorDestinoId, userId, isAdmin});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  async finalizarConversa(conversaId, userId = this.ADMIN_ID, isAdmin = false) {
+    try {
+      if (!conversaId) {
+        return {
+          success: false,
+          error: 'ID da conversa não fornecido'
+        };
+      }
+      
+      conversaId = this.normalizeId(conversaId, 'conversa');
+      
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      const response = await this.put(`/users/${userId}/conversas/${conversaId}/finalizar`, {}, { params });
+      
+      if (response.success) {
+        const cacheKey = `conversa-${conversaId}`;
+        this.conversationDetailsCache.delete(cacheKey);
+        this.updateCache('conversas', null);
+        this.updateCache('conversasFinalizadas', null);
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('finalizarConversa', error, {conversaId, userId, isAdmin});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
+  }
+
+  async arquivarConversa(conversaId, userId = this.ADMIN_ID, isAdmin = false) {
+    try {
+      if (!conversaId) {
+        return {
+          success: false,
+          error: 'ID da conversa não fornecido'
+        };
+      }
+      
+      conversaId = this.normalizeId(conversaId, 'conversa');
+      
+      const params = {};
+      if (isAdmin) {
+        params.role = 'admin';
+        params.isAdmin = 'true';
+      }
+      
+      const response = await this.put(`/users/${userId}/conversas/${conversaId}/arquivo`, {}, { params });
+      
+      if (response.success) {
+        const cacheKey = `conversa-${conversaId}`;
+        this.conversationDetailsCache.delete(cacheKey);
+        this.updateCache('conversas', null);
+        this.updateCache('conversasFinalizadas', null);
+      }
+      
+      return response;
+    } catch (error) {
+      this.logError('arquivarConversa', error, {conversaId, userId, isAdmin});
+      return {
+        success: false,
+        error: error.message,
+        data: null
+      };
+    }
   }
 
   resetCache(specificCache = null) {
