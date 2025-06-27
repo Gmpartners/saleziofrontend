@@ -354,7 +354,6 @@ const VirtualizedConversationList = React.memo(({
             });
             onSelectConversation(conversation.conversaId || conversation._id);
           }}
-          isTyping={conversation.isTyping}
           empresasComSetores={empresasComSetores}
         />
       </div>
@@ -411,9 +410,7 @@ const TabWithUnreadCount = React.memo(({ value, label, count, logger }) => {
     >
       {label}
       {count > 0 && (
-        <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#10b981] text-[10px] font-bold text-white">
-          {count > 9 ? '9+' : count}
-        </span>
+        <span className="absolute -top-1.5 -right-1.5 flex h-3 w-3 md:h-3.5 md:w-3.5 rounded-full bg-[#10b981] animate-pulse" />
       )}
     </TabsTrigger>
   );
@@ -620,7 +617,7 @@ const ConversationListHeader = React.memo(({
       <h2 className="text-base sm:text-lg font-semibold text-white flex items-center gap-2 truncate">
         <MessageSquare className="h-5 w-5 text-[#10b981] flex-shrink-0" />
         <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#10b981] to-[#059669] truncate">
-          Conversas: {currentSectorName} {isArquivada && '(Arquivadas)'}
+          Conversas
         </span>
         {unreadCount > 0 && (
           <Badge className="bg-[#10b981] text-white text-xs ml-1 px-1.5">
@@ -1253,8 +1250,7 @@ const EmployeeConversationsView = () => {
     closeToast,
     handleToastClick,
     pagination,
-    onNewMessage,
-    typingUsers
+    onNewMessage
   } = useSocket();
   
   const [forceUpdate, setForceUpdate] = useState(0);
@@ -1297,7 +1293,6 @@ const EmployeeConversationsView = () => {
   const [isMobile, setIsMobile] = useState(false);
   const [showFilterSheet, setShowFilterSheet] = useState(false);
   
-  // Registrar callback para nova mensagem - CORREÇÃO APLICADA AQUI
   useEffect(() => {
     if (onNewMessage) {
       const unsubscribe = onNewMessage((data) => {
@@ -1306,7 +1301,6 @@ const EmployeeConversationsView = () => {
           messagePreview: data.mensagem?.conteudo?.substring(0, 50) 
         });
         
-        // CORREÇÃO: Forçar atualização da UI quando nova mensagem chegar
         setForceUpdate(prev => prev + 1);
       });
       
@@ -1391,7 +1385,7 @@ const EmployeeConversationsView = () => {
       
       return counts;
     }, { all: 0, awaiting: 0, ongoing: 0, notDelegated: 0 });
-  }, [conversations, forceUpdate]); // forceUpdate como dependência para garantir re-cálculo
+  }, [conversations, forceUpdate]);
   
   useEffect(() => {
     if (unreadCounts.all > 0) {
@@ -1509,7 +1503,6 @@ const EmployeeConversationsView = () => {
     logger.info('Mudança de aba solicitada', { deAba: activeTab, paraAba: value });
     
     setActiveTab(value);
-    // CORREÇÃO: Removido clearUnreadMessages() daqui
     setError(null);
     setIsRefreshing(true);
     

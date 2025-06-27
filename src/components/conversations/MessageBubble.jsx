@@ -4,6 +4,22 @@ import { cn } from '../../lib/utils';
 import MessageStatus from './MessageStatus';
 import { User, Bot, Headset } from 'lucide-react';
 
+const normalizeRemetente = (remetente) => {
+  if (!remetente || typeof remetente !== 'string') return 'cliente';
+  
+  const normalized = remetente.toLowerCase().trim();
+  
+  if (normalized.includes('atendente') || normalized === 'admin' || normalized === 'operador') {
+    return 'atendente';
+  }
+  
+  if (normalized.includes('ai') || normalized.includes('sistema') || normalized.includes('system') || normalized.includes('bot')) {
+    return 'ai';
+  }
+  
+  return 'cliente';
+};
+
 const MessageBubble = React.memo(({ 
   message, 
   prevMessage = null,
@@ -11,9 +27,27 @@ const MessageBubble = React.memo(({
   isLastInGroup = true,
   onRetry = () => {}
 }) => {
-  const isAtendente = message.remetente === 'atendente';
-  const isAI = message.remetente === 'ai' || message.remetente === 'sistema' || message.remetente === 'system';
-  const isCliente = message.remetente === 'cliente';
+  // Verificação de segurança para message
+  if (!message || typeof message !== 'object') {
+    console.warn('MessageBubble: message inválida recebida', message);
+    return null;
+  }
+
+  // Verificação de segurança para propriedades essenciais
+  const messageContent = message.conteudo || message.content || '';
+  const messageRemetente = message.remetente || message.sender || 'cliente';
+  const messageName = message.nome || message.name || '';
+  
+  if (!messageContent) {
+    console.warn('MessageBubble: mensagem sem conteúdo', message);
+    return null;
+  }
+  
+  const normalizedRemetente = normalizeRemetente(messageRemetente);
+  
+  const isAtendente = normalizedRemetente === 'atendente';
+  const isAI = normalizedRemetente === 'ai';
+  const isCliente = normalizedRemetente === 'cliente';
   
   const isRightAligned = isAtendente || isAI;
   
@@ -52,14 +86,14 @@ const MessageBubble = React.memo(({
         isRightAligned ? "justify-end" : "justify-start"
       )}>
         <MessageStatus 
-          status={message.status} 
+          status={message.status || 'sent'} 
           timestamp={message.timestamp || message.createdAt} 
           className={isRightAligned ? "flex-row-reverse" : "flex-row"}
         />
         
         {message.status === 'failed' && (
           <button 
-            onClick={() => onRetry(message._id, message.conteudo)}
+            onClick={() => onRetry(message._id || message.id, messageContent)}
             className="ml-2 text-red-400 hover:text-red-300 text-xs underline underline-offset-2"
           >
             Tentar novamente
@@ -72,23 +106,26 @@ const MessageBubble = React.memo(({
   const getSenderInfo = () => {
     if (isCliente) {
       return {
-        icon: <User className="h-3.5 w-3.5 text-white" />,
-        label: message.nome || "Cliente"
+        icon: <User className="h-3.5 w-3.5 text-blue-300" />,
+        label: messageName || "Cliente",
+        color: "text-blue-400"
       };
     } else if (isAI) {
       return {
         icon: <Bot className="h-3.5 w-3.5 text-purple-300" />,
-        label: message.nome || "Assistente Virtual"
+        label: messageName || "Assistente Virtual",
+        color: "text-purple-400"
       };
     } else {
       return {
         icon: <Headset className="h-3.5 w-3.5 text-green-300" />,
-        label: message.nome || "Atendente"
+        label: messageName || "Atendente",
+        color: "text-green-400"
       };
     }
   };
   
-  const { icon, label } = getSenderInfo();
+  const { icon, label, color } = getSenderInfo();
 
   const getBubbleStyle = () => {
     if (isCliente) {
@@ -110,11 +147,11 @@ const MessageBubble = React.memo(({
       className={cn(
         "flex w-full",
         isRightAligned ? "justify-end" : "justify-start",
-        isGrouped ? "mt-0" : "mt-2", // Remove margin between grouped messages
-        !isLastInGroup ? "mb-0" : "mb-1" // Only add margin to last message in group
+        isGrouped ? "mt-0" : "mt-2",
+        !isLastInGroup ? "mb-0" : "mb-1"
       )}
       role="listitem"
-      aria-label={`Mensagem de ${label}: ${message.conteudo}`}
+      aria-label={`Mensagem de ${label}: ${messageContent}`}
     >
       <div className={cn(
         "flex flex-col max-w-[75%]",
@@ -127,11 +164,7 @@ const MessageBubble = React.memo(({
           )}>
             <div className="flex items-center gap-1 text-xs font-medium">
               {icon}
-              <span className={cn(
-                isCliente ? "text-blue-400" : 
-                isAI ? "text-purple-400" : 
-                "text-green-400"
-              )}>
+              <span className={color}>
                 {label}
               </span>
             </div>
@@ -140,9 +173,8 @@ const MessageBubble = React.memo(({
         
         <div className={cn(
           "px-3 py-2 rounded-lg break-words",
-          isGrouped ? (isRightAligned ? "mr-9" : "ml-9") : "", // Add margin to align with first message
+          isGrouped ? (isRightAligned ? "mr-9" : "ml-9") : "",
           getBubbleStyle(),
-          // Corner radius handling based on message position
           isGrouped && !isLastInGroup && isRightAligned ? "rounded-br-none" : "",
           isGrouped && !isLastInGroup && !isRightAligned ? "rounded-bl-none" : "",
           isGrouped 
@@ -155,7 +187,7 @@ const MessageBubble = React.memo(({
                     : "rounded-tl-none rounded-tr-lg"))
             : (isRightAligned ? "rounded-tr-sm" : "rounded-tl-sm")
         )}>
-          {message.conteudo}
+          {messageContent}
         </div>
         
         {renderTimestamp()}

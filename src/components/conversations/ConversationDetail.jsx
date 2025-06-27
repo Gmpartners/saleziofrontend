@@ -3,7 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, UserCircle, MoreVertical, CheckCircle, Archive, Loader2, Phone, Video, X, Share } from 'lucide-react';
 import { useSocket } from '../../contexts/SocketContext';
 import MessageStatus from './MessageStatus';
-import TypingIndicator from './TypingIndicator';
 import { notificationService } from '../../services/notificationService';
 import { Button } from "@/components/ui/button";
 import { 
@@ -182,7 +181,6 @@ const ConversationHeader = React.memo(({
 
 const MessageList = React.memo(({ 
   messages = [], 
-  isTyping, 
   onRetryMessage,
   messagesEndRef
 }) => {
@@ -221,8 +219,6 @@ const MessageList = React.memo(({
           onRetry={onRetryMessage}
         />
       ))}
-      
-      {isTyping && <TypingIndicator user="Digitando..." />}
       
       <div ref={messagesEndRef} />
     </div>
@@ -267,7 +263,6 @@ const ConversationDetail = () => {
     sendMessage,
     retryFailedMessage,
     isConnected,
-    sendTypingIndicator,
     transferConversation,
     finishConversation,
     archiveConversation,
@@ -276,16 +271,12 @@ const ConversationDetail = () => {
     loading: conversationLoading
   } = useConversation(id);
   
-  const [isTyping, setIsTyping] = useState(false);
-  const [typingTimeout, setTypingTimeout] = useState(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [actionType, setActionType] = useState(null);
   
   const messagesEndRef = useRef(null);
   const messageListRef = useRef(null);
-  const isUpdatePendingRef = useRef(false);
   
-  // Substituindo os diálogos modais por componentes de Dialog
   const [showTransferDialog, setShowTransferDialog] = useState(false);
   const [showFinishDialog, setShowFinishDialog] = useState(false);
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
@@ -295,13 +286,7 @@ const ConversationDetail = () => {
     if (id) {
       selectConversation(id);
     }
-    
-    return () => {
-      if (typingTimeout) {
-        clearTimeout(typingTimeout);
-      }
-    };
-  }, [id, selectConversation, typingTimeout]);
+  }, [id, selectConversation]);
 
   const scrollToBottom = useCallback(() => {
     if (messagesEndRef.current && messageListRef.current) {
@@ -350,26 +335,7 @@ const ConversationDetail = () => {
   };
 
   const handleTyping = () => {
-    setIsTyping(true);
-    
-    if (typingTimeout) {
-      clearTimeout(typingTimeout);
-    }
-    
-    if (id && isConnected && !isUpdatePendingRef.current) {
-      isUpdatePendingRef.current = true;
-      sendTypingIndicator(id);
-      
-      setTimeout(() => {
-        isUpdatePendingRef.current = false;
-      }, 1000);
-    }
-    
-    const timeout = setTimeout(() => {
-      setIsTyping(false);
-    }, 2000);
-    
-    setTypingTimeout(timeout);
+    // Removido código de typing indicator
   };
 
   const handleRetryMessage = (messageId, content) => {
@@ -406,7 +372,6 @@ const ConversationDetail = () => {
       if (success) {
         notificationService.showToast('Conversa transferida com sucesso', 'success');
         
-        // Atualize as conversas com um filtro vazio para garantir que todas sejam atualizadas
         await refreshConversations({});
         
         setSelectedSector(null);
@@ -435,7 +400,6 @@ const ConversationDetail = () => {
       if (success) {
         notificationService.showToast('Conversa finalizada com sucesso', 'success');
         
-        // Atualize tanto as conversas ativas quanto as concluídas
         await refreshConversations({});
         await refreshCompletedConversations();
         
@@ -476,7 +440,6 @@ const ConversationDetail = () => {
     }
   };
 
-  // Conteúdo do Dialog de transferência
   const transferDialogContent = useCallback(() => (
     <RadioGroup value={selectedSector} onValueChange={setSelectedSector}>
       <div className="space-y-3 max-h-[300px] overflow-auto">
@@ -551,7 +514,6 @@ const ConversationDetail = () => {
       >
         <MessageList 
           messages={mensagens}
-          isTyping={isTyping}
           onRetryMessage={handleRetryMessage}
           messagesEndRef={messagesEndRef}
         />
@@ -564,7 +526,6 @@ const ConversationDetail = () => {
         isSubmitting={isActionLoading && actionType === 'message'}
       />
       
-      {/* Dialog de Transferência */}
       <Dialog open={showTransferDialog} onOpenChange={setShowTransferDialog}>
         <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
           <DialogHeader>
@@ -604,7 +565,6 @@ const ConversationDetail = () => {
         </DialogContent>
       </Dialog>
       
-      {/* Dialog de Finalização */}
       <Dialog open={showFinishDialog} onOpenChange={setShowFinishDialog}>
         <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
           <DialogHeader>
@@ -641,7 +601,6 @@ const ConversationDetail = () => {
         </DialogContent>
       </Dialog>
       
-      {/* Dialog de Arquivamento */}
       <Dialog open={showArchiveDialog} onOpenChange={setShowArchiveDialog}>
         <DialogContent className="bg-[#070b11] border-[#1f2937]/40 text-white">
           <DialogHeader>

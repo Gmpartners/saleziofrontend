@@ -26,6 +26,7 @@ import {
 } from "../../components/ui/popover";
 
 import { useWindowSize } from '../../hooks/useWindowSize';
+import { useSocket } from '../../contexts/SocketContext';
 
 const STATUS = {
   AGUARDANDO: 'aguardando',
@@ -42,7 +43,7 @@ const debounce = (func, delay) => {
   };
 };
 
-const TabWithUnreadCount = React.memo(({ value, label, count }) => (
+const TabWithUnreadIndicator = React.memo(({ value, label, hasUnread }) => (
   <TabsTrigger 
     value={value} 
     className={`
@@ -57,10 +58,8 @@ const TabWithUnreadCount = React.memo(({ value, label, count }) => (
     `}
   >
     {label}
-    {count > 0 && (
-      <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#10b981] text-[10px] font-bold text-white">
-        {count > 9 ? '9+' : count}
-      </span>
+    {hasUnread && (
+      <span className="absolute -top-1.5 -right-1.5 flex h-3 w-3 md:h-3.5 md:w-3.5 rounded-full bg-[#10b981] animate-pulse" />
     )}
   </TabsTrigger>
 ));
@@ -106,6 +105,7 @@ const VirtualizedConversationList = React.memo(({
 
 const ConversationsList = ({ 
   conversations = [],
+  allConversations = [], // Nova prop com TODAS as conversas ativas
   selectedConversationId,
   onSelectConversation, 
   onRefresh,
@@ -128,23 +128,42 @@ const ConversationsList = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   
-  const unreadCounts = useMemo(() => {
-    if (!conversations) return { all: 0, awaiting: 0, ongoing: 0 };
+  // Estado local para forçar re-renderização
+  const [, forceUpdate] = useState({});
+  
+  // Calcular se há conversas não lidas baseado em TODAS as conversas ativas
+  const hasUnreadByStatus = useMemo(() => {
+    const conversationsToCheck = allConversations.length > 0 ? allConversations : conversations;
     
-    return conversations.reduce((counts, conv) => {
-      const unreadCount = conv.unreadCount || 0;
-      counts.all += unreadCount;
-      
-      const status = conv.status?.toLowerCase() || '';
-      if (status === STATUS.AGUARDANDO) {
-        counts.awaiting += unreadCount;
-      } else if (status === STATUS.EM_ANDAMENTO) {
-        counts.ongoing += unreadCount;
+    let hasAwaitingUnread = false;
+    let hasOngoingUnread = false;
+    
+    conversationsToCheck.forEach(conv => {
+      if (conv.hasNewMessage || conv.unreadCount > 0) {
+        const status = conv.status?.toLowerCase();
+        if (status === STATUS.AGUARDANDO) {
+          hasAwaitingUnread = true;
+        } else if (status === STATUS.EM_ANDAMENTO) {
+          hasOngoingUnread = true;
+        }
       }
-      
-      return counts;
-    }, { all: 0, awaiting: 0, ongoing: 0 });
-  }, [conversations]);
+    });
+    
+    return { 
+      all: hasAwaitingUnread || hasOngoingUnread,
+      awaiting: hasAwaitingUnread, 
+      ongoing: hasOngoingUnread 
+    };
+  }, [allConversations, conversations]);
+  
+  // Atualizar a cada segundo para garantir que os indicadores sejam atualizados
+  useEffect(() => {
+    const interval = setInterval(() => {
+      forceUpdate({});
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, []);
   
   // Lista de setores disponíveis
   const availableSectors = useMemo(() => {
@@ -152,8 +171,10 @@ const ConversationsList = ({
     sectorSet.add('all');
     
     // Extrair setores de conversas
-    if (conversations && conversations.length > 0) {
-      conversations.forEach(conv => {
+    const conversationsToCheck = allConversations.length > 0 ? allConversations : conversations;
+    
+    if (conversationsToCheck && conversationsToCheck.length > 0) {
+      conversationsToCheck.forEach(conv => {
         if (conv.setorId?.nome) {
           sectorSet.add(conv.setorId.nome);
         } else if (conv.setorInfo?.nome) {
@@ -175,7 +196,7 @@ const ConversationsList = ({
       value: sector,
       label: sector === 'all' ? 'Todos os Setores' : sector
     }));
-  }, [conversations, sectors]);
+  }, [conversations, allConversations, sectors]);
   
   const handleRefreshConversations = useCallback(async () => {
     if (isRefreshing || !onRefresh) return;
@@ -225,6 +246,7 @@ const ConversationsList = ({
       const searchMatch = !filters.searchTerm || 
         (conv.nomeCliente && conv.nomeCliente.toLowerCase().includes(filters.searchTerm)) ||
         (conv.telefoneCliente && conv.telefoneCliente.includes(filters.searchTerm)) ||
+        (conv.telefone && conv.telefone.includes(filters.searchTerm)) ||
         (conv.ultimaMensagem && conv.ultimaMensagem.toLowerCase().includes(filters.searchTerm));
       
       // Filtro por setor
@@ -304,10 +326,8 @@ const ConversationsList = ({
         <h2 className="text-lg font-semibold text-white flex items-center gap-2">
           <MessageSquare className="h-5 w-5 text-[#10b981]" />
           <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#10b981] to-[#059669]">Conversas</span>
-          {unreadCounts.all > 0 && (
-            <Badge className="bg-[#10b981] text-white text-xs ml-1 px-1.5">
-              {unreadCounts.all}
-            </Badge>
+          {hasUnreadByStatus.all && (
+            <span className="flex h-3 w-3 md:h-3.5 md:w-3.5 rounded-full bg-[#10b981] animate-pulse ml-1" />
           )}
         </h2>
         <div className="flex items-center gap-1">
@@ -430,9 +450,9 @@ const ConversationsList = ({
         className="w-full flex-1 flex flex-col"
       >
         <TabsList className="w-full grid grid-cols-3 bg-transparent border-b border-[#1f2937]/40 h-12 rounded-none p-0 sticky top-[124px] z-10">
-          <TabWithUnreadCount value="em_andamento" label="Em Andamento" count={unreadCounts.ongoing} />
-          <TabWithUnreadCount value="aguardando" label="Aguardando" count={unreadCounts.awaiting} />
-          <TabWithUnreadCount value="finalizada" label="Finalizadas" count={0} />
+          <TabWithUnreadIndicator value="em_andamento" label="Em Andamento" hasUnread={hasUnreadByStatus.ongoing} />
+          <TabWithUnreadIndicator value="aguardando" label="Aguardando" hasUnread={hasUnreadByStatus.awaiting} />
+          <TabWithUnreadIndicator value="finalizada" label="Finalizadas" hasUnread={false} />
         </TabsList>
 
         <div className="flex-1 overflow-hidden bg-[#070b11]">

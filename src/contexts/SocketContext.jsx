@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { socketService } from '../services/socket';
 import { multiflowApi } from '../services/multiflowApi';
+import { notificationService } from '../services/notificationService';
 
 import { useAuthContext } from '../hooks/useAuthContext';
 
@@ -12,6 +13,82 @@ const STATUS = {
 };
 
 export const SocketContext = createContext(null);
+
+// Função de validação e sanitização de conversa
+const sanitizeConversation = (conversation) => {
+  if (!conversation || typeof conversation !== 'object') {
+    console.warn('SocketContext: conversa inválida detectada', conversation);
+    return null;
+  }
+  
+  // Buscar nome do cliente em múltiplos campos possíveis
+  const getNomeCliente = () => {
+    if (conversation.nomeCliente && conversation.nomeCliente.trim()) return conversation.nomeCliente;
+    if (conversation.nome && conversation.nome.trim()) return conversation.nome;
+    if (conversation.clienteNome && conversation.clienteNome.trim()) return conversation.clienteNome;
+    if (conversation.cliente?.nome && conversation.cliente.nome.trim()) return conversation.cliente.nome;
+    if (conversation.dadosCliente?.nome && conversation.dadosCliente.nome.trim()) return conversation.dadosCliente.nome;
+    return 'Cliente';
+  };
+
+  // Buscar telefone em múltiplos campos possíveis
+  const getTelefone = () => {
+    if (conversation.telefone) return conversation.telefone;
+    if (conversation.telefoneCliente) return conversation.telefoneCliente;
+    if (conversation.cliente?.telefone) return conversation.cliente.telefone;
+    if (conversation.dadosCliente?.telefone) return conversation.dadosCliente.telefone;
+    return '';
+  };
+  
+  // Garantir que as propriedades essenciais existam
+  const sanitized = {
+    _id: conversation._id || conversation.conversaId || `temp-${Date.now()}`,
+    conversaId: conversation.conversaId || conversation._id,
+    nomeCliente: getNomeCliente(),
+    telefone: getTelefone(),
+    telefoneCliente: getTelefone(), // Adicionar campo alternativo para compatibilidade
+    status: conversation.status || STATUS.AGUARDANDO,
+    ultimaAtividade: conversation.ultimaAtividade || new Date().toISOString(),
+    ultimaMensagem: conversation.ultimaMensagem || '',
+    unreadCount: Number(conversation.unreadCount) || 0,
+    hasNewMessage: Boolean(conversation.hasNewMessage || conversation.unreadCount > 0),
+    mensagens: Array.isArray(conversation.mensagens) ? conversation.mensagens : [],
+    setorId: conversation.setorId || null,
+    empresaId: conversation.empresaId || null,
+    atendenteId: conversation.atendenteId || null,
+    created: conversation.created || conversation.ultimaAtividade || new Date().toISOString(),
+    arquivada: Boolean(conversation.arquivada),
+    ...conversation
+  };
+  
+  // Sanitizar mensagens dentro da conversa
+  if (Array.isArray(sanitized.mensagens)) {
+    sanitized.mensagens = sanitized.mensagens.map(sanitizeMessage).filter(Boolean);
+  }
+  
+  return sanitized;
+};
+
+// Função de sanitização de mensagem
+const sanitizeMessage = (message) => {
+  if (!message || typeof message !== 'object') {
+    console.warn('SocketContext: mensagem inválida detectada', message);
+    return null;
+  }
+  
+  return {
+    _id: message._id || message.id || `temp-msg-${Date.now()}`,
+    conversaId: message.conversaId || '',
+    conteudo: String(message.conteudo || message.content || ''),
+    remetente: String(message.remetente || message.sender || 'cliente'),
+    timestamp: message.timestamp || message.createdAt || new Date().toISOString(),
+    status: message.status || 'sent',
+    lida: Boolean(message.lida || message.read),
+    tipo: message.tipo || message.type || 'texto',
+    nome: String(message.nome || message.name || ''),
+    ...message
+  };
+};
 
 export const SocketProvider = ({ children }) => {
   const { user, userProfile, isAdmin } = useAuthContext();
@@ -35,8 +112,37 @@ export const SocketProvider = ({ children }) => {
     pages: 1
   });
   
-  // Callback para notificar sobre novas mensagens
   const [onNewMessageCallback, setOnNewMessageCallback] = useState(null);
+  
+  // Modificado para usar boolean ao invés de contador
+  const [unreadMessagesMap, setUnreadMessagesMap] = useState(() => {
+    try {
+      const saved = localStorage.getItem('unreadMessagesMap');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Converter valores numéricos para boolean
+        const booleanMap = {};
+        Object.keys(parsed).forEach(key => {
+          booleanMap[key] = parsed[key] > 0;
+        });
+        return booleanMap;
+      }
+      return {};
+    } catch (error) {
+      console.error('Erro ao carregar mapa de mensagens não lidas:', error);
+      return {};
+    }
+  });
+  
+  const [allConversationsCache, setAllConversationsCache] = useState(() => {
+    try {
+      const saved = localStorage.getItem('allConversationsCache');
+      return saved ? JSON.parse(saved) : {};
+    } catch (error) {
+      console.error('Erro ao carregar cache de conversas:', error);
+      return {};
+    }
+  });
   
   const refs = {
     selectedConversationId: useRef(null),
@@ -58,6 +164,24 @@ export const SocketProvider = ({ children }) => {
   }, []);
   
   useEffect(() => {
+    try {
+      localStorage.setItem('unreadMessagesMap', JSON.stringify(unreadMessagesMap));
+      const hasUnread = Object.values(unreadMessagesMap).some(hasUnread => hasUnread === true);
+      setHasUnreadMessages(hasUnread);
+    } catch (error) {
+      console.error('Erro ao salvar mapa de mensagens não lidas:', error);
+    }
+  }, [unreadMessagesMap]);
+  
+  useEffect(() => {
+    try {
+      localStorage.setItem('allConversationsCache', JSON.stringify(allConversationsCache));
+    } catch (error) {
+      console.error('Erro ao salvar cache de conversas:', error);
+    }
+  }, [allConversationsCache]);
+  
+  useEffect(() => {
     const storedToken = localStorage.getItem('apiToken');
     const defaultToken = import.meta.env.VITE_API_TOKEN || 'netwydZWjrJpA';
     
@@ -69,18 +193,19 @@ export const SocketProvider = ({ children }) => {
   }, []);
   
   const enrichConversationWithSectorData = useCallback(async (conversation) => {
-    if (!conversation) return conversation;
+    const sanitizedConversation = sanitizeConversation(conversation);
+    if (!sanitizedConversation) return null;
     
-    const setorId = conversation.setorId;
-    if (!setorId) return conversation;
+    const setorId = sanitizedConversation.setorId;
+    if (!setorId) return sanitizedConversation;
     
-    if (typeof setorId === 'object' && setorId.nome) return conversation;
+    if (typeof setorId === 'object' && setorId.nome) return sanitizedConversation;
     
     const normalizedSetorId = multiflowApi.normalizeId(setorId, 'setor');
     
     if (refs.sectorCache.current.has(normalizedSetorId)) {
       return {
-        ...conversation,
+        ...sanitizedConversation,
         setorInfo: refs.sectorCache.current.get(normalizedSetorId),
         originalSetorId: setorId
       };
@@ -96,7 +221,7 @@ export const SocketProvider = ({ children }) => {
         refs.sectorCache.current.set(normalizedSetorId, response.data);
         
         return {
-          ...conversation,
+          ...sanitizedConversation,
           setorInfo: response.data,
           originalSetorId: setorId
         };
@@ -105,14 +230,17 @@ export const SocketProvider = ({ children }) => {
       console.error('Erro ao buscar detalhes do setor:', error);
     }
     
-    return conversation;
+    return sanitizedConversation;
   }, [userProfile, isAdmin]);
   
   const enrichConversationsWithSectorData = useCallback(async (conversations) => {
     if (!Array.isArray(conversations) || conversations.length === 0) return [];
     
+    // Sanitizar todas as conversas primeiro
+    const sanitizedConversations = conversations.map(sanitizeConversation).filter(Boolean);
+    
     const uniqueSectorIds = new Set();
-    conversations.forEach(conv => {
+    sanitizedConversations.forEach(conv => {
       if (conv.setorId && typeof conv.setorId !== 'object') {
         uniqueSectorIds.add(multiflowApi.normalizeId(conv.setorId, 'setor'));
       }
@@ -138,7 +266,7 @@ export const SocketProvider = ({ children }) => {
       await Promise.all(sectorPromises);
     }
     
-    return conversations.map(conv => {
+    return sanitizedConversations.map(conv => {
       if (!conv.setorId || typeof conv.setorId === 'object') return conv;
       
       const normalizedSetorId = multiflowApi.normalizeId(conv.setorId, 'setor');
@@ -158,6 +286,26 @@ export const SocketProvider = ({ children }) => {
     if (!conversationId || !userProfile) return;
     
     const normalizedId = multiflowApi.normalizeId(conversationId, 'conversa');
+    
+    setUnreadMessagesMap(prev => {
+      const newMap = { ...prev };
+      delete newMap[normalizedId];
+      return newMap;
+    });
+    
+    setAllConversationsCache(prev => {
+      if (prev[normalizedId]) {
+        return {
+          ...prev,
+          [normalizedId]: {
+            ...prev[normalizedId],
+            unreadCount: 0,
+            hasNewMessage: false
+          }
+        };
+      }
+      return prev;
+    });
     
     setConversations(prev => 
       prev.map(conv => {
@@ -243,7 +391,6 @@ export const SocketProvider = ({ children }) => {
     
     refs.isRefreshing.current = true;
     
-    // Não mostrar loading se for silent refresh
     if (!filters.silent) {
       setIsLoading(true);
     }
@@ -258,8 +405,7 @@ export const SocketProvider = ({ children }) => {
         page: pagination.page,
         limit: pagination.limit,
         forceRefresh: true,
-        // CORREÇÃO: Adicionar fields para incluir ultimaMensagem
-        fields: 'conversaId,_id,nomeCliente,telefone,status,setorId,empresaId,atendenteId,ultimaAtividade,ultimaMensagem,unreadCount,created,arquivada'
+        fields: 'conversaId,_id,nomeCliente,telefone,status,setorId,empresaId,atendenteId,ultimaAtividade,ultimaMensagem,unreadCount,created,arquivada,nome,clienteNome,telefoneCliente,cliente,dadosCliente'
       };
       
       const mergedFilters = { ...defaultFilters, ...filters };
@@ -281,7 +427,6 @@ export const SocketProvider = ({ children }) => {
         }
       }
       
-      // Não limpar conversas se for silent refresh
       if (!filters.silent && mergedFilters.status !== STATUS.FINALIZADA) {
         setConversations([]);
       }
@@ -292,7 +437,28 @@ export const SocketProvider = ({ children }) => {
       if (response.success) {
         if (Array.isArray(response.data)) {
           const enrichedConversations = await enrichConversationsWithSectorData(response.data);
-          setConversations(sortConversationsByActivity(enrichedConversations));
+          
+          const conversationsWithUnread = enrichedConversations.map(conv => {
+            const conversationId = conv.conversaId || conv._id;
+            const hasUnread = unreadMessagesMap[conversationId] === true;
+            
+            setAllConversationsCache(prev => ({
+              ...prev,
+              [conversationId]: {
+                ...conv,
+                unreadCount: hasUnread ? 1 : 0,
+                hasNewMessage: hasUnread
+              }
+            }));
+            
+            return {
+              ...conv,
+              unreadCount: hasUnread ? 1 : 0,
+              hasNewMessage: hasUnread
+            };
+          });
+          
+          setConversations(sortConversationsByActivity(conversationsWithUnread));
           
           if (response.pagination) {
             setPagination(response.pagination);
@@ -319,7 +485,7 @@ export const SocketProvider = ({ children }) => {
         setIsLoading(false);
       }
     }
-  }, [userProfile, isAdmin, pagination, normalizeSetorId, sortConversationsByActivity, enrichConversationsWithSectorData]);
+  }, [userProfile, isAdmin, pagination, normalizeSetorId, sortConversationsByActivity, enrichConversationsWithSectorData, unreadMessagesMap]);
 
   const refreshCompletedConversations = useCallback(async (filters = {}) => {
     setIsLoading(true);
@@ -334,8 +500,7 @@ export const SocketProvider = ({ children }) => {
         page: pagination.page,
         limit: pagination.limit,
         forceRefresh: true,
-        // CORREÇÃO: Adicionar fields para incluir ultimaMensagem
-        fields: 'conversaId,_id,nomeCliente,telefone,status,setorId,empresaId,atendenteId,ultimaAtividade,ultimaMensagem,unreadCount,created,arquivada'
+        fields: 'conversaId,_id,nomeCliente,telefone,status,setorId,empresaId,atendenteId,ultimaAtividade,ultimaMensagem,unreadCount,created,arquivada,nome,clienteNome,telefoneCliente,cliente,dadosCliente'
       };
       
       const mergedFilters = { ...defaultFilters, ...filters };
@@ -464,6 +629,10 @@ export const SocketProvider = ({ children }) => {
           hasNewMessage: false
         });
         
+        if (!enrichedConversation) {
+          throw new Error('Conversa sanitizada retornou null');
+        }
+        
         if (!Array.isArray(enrichedConversation.mensagens)) {
           enrichedConversation.mensagens = [];
         }
@@ -495,11 +664,12 @@ export const SocketProvider = ({ children }) => {
         console.error('Resposta da API sem sucesso:', response);
         if (cachedConversation) {
           const enrichedCachedConversation = await enrichConversationWithSectorData(cachedConversation);
-          setSelectedConversation(enrichedCachedConversation);
-          return enrichedCachedConversation;
-        } else {
-          throw new Error('Não foi possível carregar a conversa');
+          if (enrichedCachedConversation) {
+            setSelectedConversation(enrichedCachedConversation);
+            return enrichedCachedConversation;
+          }
         }
+        throw new Error('Não foi possível carregar a conversa');
       }
     } catch (error) {
       console.error('Erro ao selecionar conversa:', error);
@@ -513,19 +683,21 @@ export const SocketProvider = ({ children }) => {
       
       if (cachedConversation) {
         const enrichedCachedConversation = await enrichConversationWithSectorData(cachedConversation);
-        setSelectedConversation(enrichedCachedConversation);
-        return enrichedCachedConversation;
-      } else {
-        setSelectedConversation(null);
-        return null;
+        if (enrichedCachedConversation) {
+          setSelectedConversation(enrichedCachedConversation);
+          return enrichedCachedConversation;
+        }
       }
+      
+      setSelectedConversation(null);
+      return null;
     } finally {
       setIsLoading(false);
     }
   }, [userProfile, isAdmin, markMessagesAsRead, updateConversationStatus, enrichConversationWithSectorData]);
   
   const createOptimisticMessage = useCallback((conversationId, text, tempId) => {
-    return {
+    return sanitizeMessage({
       _id: tempId,
       conversaId: conversationId,
       conteudo: text.trim(),
@@ -535,7 +707,7 @@ export const SocketProvider = ({ children }) => {
       lida: false,
       tipo: 'texto',
       nome: userProfile?.nome || 'Atendente'
-    };
+    });
   }, [userProfile]);
   
   const updateUIWithOptimisticMessage = useCallback((conversationId, optimisticMessage) => {
@@ -569,6 +741,15 @@ export const SocketProvider = ({ children }) => {
         return conv;
       });
     });
+    
+    setAllConversationsCache(prev => ({
+      ...prev,
+      [normalizedId]: {
+        ...prev[normalizedId],
+        ultimaMensagem: optimisticMessage.conteudo,
+        ultimaAtividade: new Date().toISOString()
+      }
+    }));
   }, []);
   
   const updateMessageStatusAfterSend = useCallback((conversationId, tempId, messageId) => {
@@ -655,6 +836,10 @@ export const SocketProvider = ({ children }) => {
       
       const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       const optimisticMessage = createOptimisticMessage(normalizedId, text, tempId);
+      
+      if (!optimisticMessage) {
+        throw new Error('Falha ao criar mensagem otimista');
+      }
       
       refs.optimisticMessages.current.set(tempId, optimisticMessage);
       updateUIWithOptimisticMessage(normalizedId, optimisticMessage);
@@ -908,7 +1093,6 @@ export const SocketProvider = ({ children }) => {
   }, [completedConversations]);
   
   useEffect(() => {
-    // Inicializar socket sem parâmetro para usar a URL do .env
     socketService.initialize();
     return () => {
       socketService.disconnect();
@@ -953,14 +1137,6 @@ export const SocketProvider = ({ children }) => {
   useEffect(() => {
     const handleFocus = () => {
       refs.appFocused.current = true;
-      
-      if (selectedConversation?._id || selectedConversation?.conversaId) {
-        const conversationId = selectedConversation.conversaId || selectedConversation._id;
-        markMessagesAsRead(conversationId);
-        selectConversation(conversationId);
-      }
-      
-      setToastNotification(prev => ({...prev, show: false}));
     };
     
     const handleBlur = () => {
@@ -974,7 +1150,7 @@ export const SocketProvider = ({ children }) => {
       window.removeEventListener('focus', handleFocus);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [selectedConversation, markMessagesAsRead, selectConversation]);
+  }, []);
   
   const processTypingIndicator = useCallback((data) => {
     if (!data || !data.conversaId) return;
@@ -998,69 +1174,137 @@ export const SocketProvider = ({ children }) => {
     }, 3000);
   }, []);
   
-  const handleUnreadMessage = useCallback((data) => {
-    setHasUnreadMessages(true);
+  const showNotificationToast = useCallback(async (data) => {
+    if (!data || !data.conversaId || !data.mensagem) return;
     
     const conversationId = data.conversaId;
-    const conversation = refs.conversations.current.find(c => 
-      (c.conversaId === conversationId || c._id === conversationId)
-    );
+    
+    let conversationInfo = allConversationsCache[conversationId];
+    
+    if (!conversationInfo) {
+      try {
+        const isAdminUser = userProfile?.role === 'admin' || isAdmin;
+        const userId = multiflowApi.ADMIN_ID;
+        const response = await multiflowApi.getConversa(conversationId, userId, false, isAdminUser);
+        
+        if (response.success && response.data) {
+          conversationInfo = response.data;
+          setAllConversationsCache(prev => ({
+            ...prev,
+            [conversationId]: conversationInfo
+          }));
+        }
+      } catch (error) {
+        console.error('Erro ao buscar informações da conversa:', error);
+      }
+    }
     
     setToastNotification({
       show: true,
-      message: data.mensagem.conteudo,
-      sender: conversation?.nomeCliente || 'Cliente',
+      message: data.mensagem.conteudo || 'Nova mensagem',
+      sender: conversationInfo?.nomeCliente || data.mensagem.nome || 'Cliente',
       conversationId: conversationId
     });
-  }, []);
+    
+    if (notificationService) {
+      try {
+        await notificationService.showNotification(
+          conversationInfo?.nomeCliente || 'Nova mensagem',
+          {
+            body: data.mensagem.conteudo || 'Nova mensagem',
+            icon: '/icon-192x192.png',
+            badge: '/icon-96x96.png',
+            tag: conversationId,
+            data: { conversationId },
+            actions: [
+              {
+                action: 'reply',
+                title: 'Responder'
+              },
+              {
+                action: 'view',
+                title: 'Ver conversa'
+              }
+            ]
+          }
+        );
+      } catch (error) {
+        console.error('Erro ao mostrar notificação do sistema:', error);
+      }
+    }
+  }, [allConversationsCache, userProfile, isAdmin]);
   
   const updateConversationsWithNewMessage = useCallback((data, isCurrentConversation) => {
+    if (!data || !data.conversaId || !data.mensagem) return;
+    
     if (isCurrentConversation) {
       updateSelectedConversationWithNewMessage(data);
     }
     
     const conversationId = data.conversaId;
+    const isWindowFocused = refs.appFocused.current;
+    const shouldMarkUnread = !isCurrentConversation || !isWindowFocused;
+    
+    if (shouldMarkUnread) {
+      setUnreadMessagesMap(prevMap => ({
+        ...prevMap,
+        [conversationId]: true
+      }));
+    }
+    
+    setAllConversationsCache(prev => {
+      const existing = prev[conversationId] || {};
+      return {
+        ...prev,
+        [conversationId]: {
+          ...existing,
+          ultimaMensagem: data.mensagem.conteudo || '',
+          ultimaAtividade: data.mensagem.timestamp || new Date().toISOString(),
+          unreadCount: shouldMarkUnread ? 1 : 0,
+          hasNewMessage: shouldMarkUnread
+        }
+      };
+    });
     
     setConversations(prev => {
       const updatedConversations = prev.map(conv => {
         if (conv.conversaId === conversationId || conv._id === conversationId) {
-          const isWindowFocused = refs.appFocused.current;
-          const shouldIncrementUnread = !isCurrentConversation || !isWindowFocused;
-          
           return {
             ...conv,
-            ultimaMensagem: data.mensagem.conteudo,
+            ultimaMensagem: data.mensagem.conteudo || '',
             ultimaAtividade: data.mensagem.timestamp || new Date().toISOString(),
-            unreadCount: shouldIncrementUnread ? (conv.unreadCount || 0) + 1 : 0,
-            hasNewMessage: shouldIncrementUnread
+            unreadCount: shouldMarkUnread ? 1 : 0,
+            hasNewMessage: shouldMarkUnread
           };
         }
         return conv;
       });
       
-      // Se a conversa não existe na lista, não fazer refresh completo
       const conversationExists = updatedConversations.some(c => 
         (c.conversaId === conversationId || c._id === conversationId)
       );
       
-      if (!conversationExists) {
-        // Apenas adicionar a nova conversa sem recarregar tudo
-        console.log('Nova conversa detectada, buscando dados...');
-        return prev;
+      if (conversationExists) {
+        return sortConversationsByActivity(updatedConversations);
       }
       
-      return sortConversationsByActivity(updatedConversations);
+      return prev;
     });
   }, [sortConversationsByActivity]);
   
   const updateSelectedConversationWithNewMessage = useCallback((data) => {
+    if (!data || !data.mensagem) return;
+    
+    const sanitizedMessage = sanitizeMessage(data.mensagem);
+    if (!sanitizedMessage) return;
+    
     setSelectedConversation(prev => {
       if (!prev) return null;
       
       const mensagens = [...(prev.mensagens || [])];
       const existingIndex = mensagens.findIndex(m => 
-        m._id === data.mensagem._id || 
-        (m.timestamp === data.mensagem.timestamp && m.conteudo === data.mensagem.conteudo)
+        m._id === sanitizedMessage._id || 
+        (m.timestamp === sanitizedMessage.timestamp && m.conteudo === sanitizedMessage.conteudo)
       );
       
       if (existingIndex >= 0) {
@@ -1069,9 +1313,9 @@ export const SocketProvider = ({ children }) => {
       
       return {
         ...prev,
-        mensagens: [...mensagens, data.mensagem],
-        ultimaAtividade: data.mensagem.timestamp || new Date().toISOString(),
-        ultimaMensagem: data.mensagem.conteudo
+        mensagens: [...mensagens, sanitizedMessage],
+        ultimaAtividade: sanitizedMessage.timestamp || new Date().toISOString(),
+        ultimaMensagem: sanitizedMessage.conteudo || ''
       };
     });
   }, []);
@@ -1087,21 +1331,28 @@ export const SocketProvider = ({ children }) => {
     const isWindowFocused = refs.appFocused.current;
     
     if (!isWindowFocused || !isCurrentConversation) {
-      handleUnreadMessage(data);
+      showNotificationToast(data);
     }
     
     updateConversationsWithNewMessage(data, isCurrentConversation);
     
-    // Notificar callback se houver
     if (onNewMessageCallback) {
       onNewMessageCallback(data);
     }
-  }, [handleUnreadMessage, updateConversationsWithNewMessage, onNewMessageCallback]);
+  }, [showNotificationToast, updateConversationsWithNewMessage, onNewMessageCallback]);
   
   const processConversationUpdate = useCallback((data) => {
     if (!data || !data._id) return;
     
     const conversationId = data.conversaId || data._id;
+    
+    setAllConversationsCache(prev => ({
+      ...prev,
+      [conversationId]: {
+        ...prev[conversationId],
+        ...data
+      }
+    }));
     
     setConversations(prev => 
       prev.map(c => {
@@ -1129,7 +1380,6 @@ export const SocketProvider = ({ children }) => {
     if (!data || !data._id) return;
 
     try {
-      // Buscar apenas a nova conversa específica
       const isAdminUser = userProfile?.role === 'admin' || isAdmin;
       const userId = multiflowApi.ADMIN_ID;
       
@@ -1138,14 +1388,19 @@ export const SocketProvider = ({ children }) => {
       if (response.success && response.data) {
         const enrichedConversation = await enrichConversationWithSectorData(response.data);
         
-        setConversations(prev => {
-          // Verificar se a conversa já existe
-          const exists = prev.some(c => c._id === data._id || c.conversaId === data._id);
-          if (exists) return prev;
+        if (enrichedConversation) {
+          setAllConversationsCache(prev => ({
+            ...prev,
+            [data._id]: enrichedConversation
+          }));
           
-          // Adicionar nova conversa no início da lista
-          return sortConversationsByActivity([enrichedConversation, ...prev]);
-        });
+          setConversations(prev => {
+            const exists = prev.some(c => c._id === data._id || c.conversaId === data._id);
+            if (exists) return prev;
+            
+            return sortConversationsByActivity([enrichedConversation, ...prev]);
+          });
+        }
       }
     } catch (error) {
       console.error('Erro ao buscar nova conversa:', error);
@@ -1198,7 +1453,7 @@ export const SocketProvider = ({ children }) => {
     
     if (!refs.selectedConversationId.current) return;
     
-    if (timeSinceLastUpdate >= 60000 && !refs.isRefreshing.current) { // Mudado de 10s para 60s
+    if (timeSinceLastUpdate >= 60000 && !refs.isRefreshing.current) {
       await refreshCurrentConversationFromApi();
     }
   }, []);
@@ -1217,7 +1472,9 @@ export const SocketProvider = ({ children }) => {
       
       if (response.success && response.data) {
         const enrichedConversation = await enrichConversationWithSectorData(response.data);
-        updateSelectedConversationFromApi(enrichedConversation, conversationId);
+        if (enrichedConversation) {
+          updateSelectedConversationFromApi(enrichedConversation, conversationId);
+        }
       } else {
         console.error('Resposta da API sem sucesso:', response);
       }
@@ -1251,7 +1508,7 @@ export const SocketProvider = ({ children }) => {
       clearInterval(refs.updateInterval.current);
     }
     
-    refs.updateInterval.current = setInterval(updateCurrentConversation, 5000); // Mudado de 1s para 5s
+    refs.updateInterval.current = setInterval(updateCurrentConversation, 5000);
     
     return () => {
       if (refs.updateInterval.current) {
@@ -1293,7 +1550,6 @@ export const SocketProvider = ({ children }) => {
     }
   }, [toastNotification, closeToast]);
   
-  // Função para registrar callback de nova mensagem
   const onNewMessage = useCallback((callback) => {
     setOnNewMessageCallback(() => callback);
     
@@ -1301,6 +1557,24 @@ export const SocketProvider = ({ children }) => {
       setOnNewMessageCallback(null);
     };
   }, []);
+  
+  // Métodos modificados para trabalhar com boolean
+  const getTotalUnreadCount = useCallback(() => {
+    return Object.values(unreadMessagesMap).filter(hasUnread => hasUnread === true).length;
+  }, [unreadMessagesMap]);
+  
+  const getUnreadCountByStatus = useCallback((status) => {
+    let count = 0;
+    Object.entries(unreadMessagesMap).forEach(([convId, hasUnread]) => {
+      if (hasUnread) {
+        const conv = allConversationsCache[convId];
+        if (conv && conv.status && conv.status.toLowerCase() === status.toLowerCase()) {
+          count++;
+        }
+      }
+    });
+    return count;
+  }, [unreadMessagesMap, allConversationsCache]);
   
   const value = {
     isConnected,
@@ -1312,6 +1586,9 @@ export const SocketProvider = ({ children }) => {
     typingUsers,
     toastNotification,
     pagination,
+    unreadMessagesMap,
+    getTotalUnreadCount,
+    getUnreadCountByStatus,
     closeToast,
     handleToastClick,
     clearUnreadMessages,
@@ -1326,7 +1603,8 @@ export const SocketProvider = ({ children }) => {
     finishConversation,
     archiveConversation,
     markMessagesAsRead,
-    onNewMessage, // Exportar a função para registrar callback
+    onNewMessage,
+    notificationService,
     isAdmin: userProfile?.role === 'admin' || isAdmin,
     userProfile
   };

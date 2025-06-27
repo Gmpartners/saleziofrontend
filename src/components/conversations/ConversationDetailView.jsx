@@ -5,7 +5,6 @@ import { notificationService } from '../../services/notificationService';
 import { cn } from '../../lib/utils';
 
 import MessageBubble from './MessageBubble';
-import TypingIndicator from './TypingIndicator';
 import ConversationHeader from './ConversationHeader';
 import { Button } from "../../components/ui/button";
 
@@ -18,7 +17,6 @@ const STATUS = {
 
 const VirtualizedMessageList = React.memo(({ 
   messages, 
-  typingUser, 
   onRetryMessage, 
   scrollToBottom
 }) => {
@@ -69,10 +67,6 @@ const VirtualizedMessageList = React.memo(({
           />
         ))}
         
-        {typingUser && (
-          <TypingIndicator user={typingUser} />
-        )}
-        
         <div ref={messagesEndRef} />
       </div>
     </div>
@@ -83,9 +77,7 @@ const ConversationDetailView = ({
   conversation, 
   isConnected, 
   isProcessing, 
-  typingUsers, 
   onSendMessage, 
-  onTypingIndicator, 
   onShowFinishModal, 
   onShowTransferModal, 
   onShowArchiveModal,
@@ -94,18 +86,11 @@ const ConversationDetailView = ({
   const [newMessage, setNewMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef(null);
-  const typingTimeoutRef = useRef(null);
   
   useEffect(() => {
     if (inputRef.current && conversation) {
       inputRef.current.focus();
     }
-    
-    return () => {
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-    };
   }, [conversation]);
   
   const handleSendMessage = async (e) => {
@@ -131,21 +116,16 @@ const ConversationDetailView = ({
     }
   };
   
-  const handleTyping = useCallback(() => {
-    if (conversation?._id && !typingTimeoutRef.current) {
-      onTypingIndicator(conversation._id);
-      
-      // Limitar chamadas de typing indicator
-      typingTimeoutRef.current = setTimeout(() => {
-        typingTimeoutRef.current = null;
-      }, 1000);
-    }
-  }, [conversation, onTypingIndicator]);
-  
   const handleRetryMessage = useCallback((messageId, content) => {
     if (!conversation?._id) return;
-    // Implementação da função de retry se necessário
   }, [conversation]);
+  
+  const handleKeyDown = useCallback((e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  }, [handleSendMessage]);
   
   if (!conversation) {
     return (
@@ -161,7 +141,6 @@ const ConversationDetailView = ({
     );
   }
   
-  const activeTyper = typingUsers?.[conversation._id];
   const isConversationFinished = conversation.status && conversation.status.toLowerCase() === STATUS.FINALIZADA;
   
   return (
@@ -178,7 +157,6 @@ const ConversationDetailView = ({
       
       <VirtualizedMessageList 
         messages={conversation.mensagens || []}
-        typingUser={activeTyper}
         onRetryMessage={handleRetryMessage}
         scrollToBottom={true}
       />
@@ -187,23 +165,22 @@ const ConversationDetailView = ({
         <input
           type="text"
           value={newMessage}
-          onChange={e => {
-            setNewMessage(e.target.value);
-            handleTyping();
-          }}
+          onChange={e => setNewMessage(e.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder={isConversationFinished ? "Conversa finalizada" : "Digite sua mensagem..."}
           ref={inputRef}
           disabled={isSubmitting || isConversationFinished || !isConnected}
           className={cn(
             "flex-1 bg-[#101820] border border-[#1f2937]/40 text-white rounded-md px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-[#10b981]/30",
-            "text-sm md:text-base placeholder:text-slate-400/70"
+            "text-sm md:text-base placeholder:text-slate-400/70",
+            "disabled:opacity-50 disabled:cursor-not-allowed"
           )}
         />
         
         <Button
           type="submit"
           disabled={!newMessage.trim() || isSubmitting || isConversationFinished || !isConnected}
-          className="px-4 bg-[#10b981] text-white rounded-md hover:bg-[#0d9268] disabled:opacity-50 disabled:hover:bg-[#10b981]"
+          className="px-4 bg-[#10b981] text-white rounded-md hover:bg-[#0d9268] disabled:opacity-50 disabled:hover:bg-[#10b981] transition-colors"
         >
           {isSubmitting ? (
             <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

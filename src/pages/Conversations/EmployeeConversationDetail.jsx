@@ -35,7 +35,6 @@ import { cn } from "../../lib/utils";
 import { getEmpresaSetorInfo, getEmpresaColor } from '../../utils/empresaHelpers';
 
 import MessageBubble from '../../components/conversations/MessageBubble';
-import TypingIndicator from '../../components/conversations/TypingIndicator';
 
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
@@ -209,42 +208,6 @@ const ConversationHeader = React.memo(({
       </div>
       
       <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-        {!isMobile && (
-          <>
-            <Button 
-              size="icon"
-              variant="ghost"
-              className="rounded-full h-8 w-8 sm:flex hidden text-slate-400 hover:text-[#10b981] hover:bg-[#101820]"
-              title="Chamada de vídeo"
-              disabled={isConversationFinished}
-              onClick={() => toast.info('Chamada de vídeo não implementada')}
-            >
-              <Video className="h-4 w-4" />
-            </Button>
-            
-            <Button 
-              size="icon"
-              variant="ghost"
-              className="rounded-full h-8 w-8 sm:flex hidden text-slate-400 hover:text-[#10b981] hover:bg-[#101820]"
-              title="Chamada de voz"
-              disabled={isConversationFinished}
-              onClick={() => toast.info('Chamada de voz não implementada')}
-            >
-              <Phone className="h-4 w-4" />
-            </Button>
-          </>
-        )}
-        
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onToggleInfoPanel}
-          className="rounded-full h-8 w-8 text-slate-400 hover:text-white hover:bg-[#101820]"
-          title="Informações da conversa"
-        >
-          <Info className="h-4 w-4" />
-        </Button>
-        
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button 
@@ -444,7 +407,6 @@ const CustomMessageBubble = React.memo(({ message, prevMessage, nextMessage }) =
 
 const MessageList = React.memo(({ 
   messages = [], 
-  isTyping,
   messagesEndRef
 }) => {
   if (!messages || messages.length === 0) {
@@ -474,12 +436,6 @@ const MessageList = React.memo(({
               nextMessage={index < messages.length - 1 ? messages[index + 1] : null}
             />
           ))}
-          
-          {isTyping && (
-            <div className="flex justify-start mt-2">
-              <TypingIndicator isTyping={true} />
-            </div>
-          )}
         </div>
       </AnimatePresence>
       <div ref={messagesEndRef} className="h-px w-full" />
@@ -967,13 +923,11 @@ const EmployeeConversationDetail = () => {
     selectedConversation, 
     selectConversation,
     sendMessage,
-    sendTypingIndicator,
     forceRefreshCurrentConversation,
     finishConversation,
     transferConversation,
     archiveConversation,
     markMessagesAsRead,
-    typingUsers,
     isLoading
   } = useSocket();
   
@@ -1037,10 +991,6 @@ const EmployeeConversationDetail = () => {
       }
     }
   }, [selectedConversation, checkSectorAccess, navigate, isAdmin]);
-  
-  const isTyping = useMemo(() => {
-    return typingUsers && typingUsers[normalizedId] !== undefined;
-  }, [typingUsers, normalizedId]);
   
   const scrollToBottom = useCallback(() => {
     setTimeout(() => {
@@ -1154,7 +1104,8 @@ const EmployeeConversationDetail = () => {
       console.error('Erro ao buscar empresas com setores:', err);
       fetchSectors();
     }
-  }, [isAdmin]);  
+  }, [isAdmin]);
+  
   const fetchSectors = useCallback(async () => {
     try {
       setSectors([]);
@@ -1230,12 +1181,6 @@ const EmployeeConversationDetail = () => {
       setError(null);
     };
   }, [normalizedId, selectConversation, markMessagesAsRead, fetchEmpresasComSetores]);
-  
-  useEffect(() => {
-    if (message && isConnected) {
-      sendTypingIndicator(normalizedId);
-    }
-  }, [message, isConnected, sendTypingIndicator, normalizedId]);
   
   const handleRefresh = async () => {
     if (isRefreshing) return;
@@ -1520,7 +1465,6 @@ const EmployeeConversationDetail = () => {
                 >
                   <MessageList 
                     messages={transformMessages(selectedConversation.mensagens)} 
-                    isTyping={isTyping}
                     messagesEndRef={messagesEndRef}
                   />
                 </div>

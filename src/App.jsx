@@ -7,6 +7,7 @@ import { useAuthContext } from "./hooks/useAuthContext";
 import { SocketProvider } from "./contexts/SocketContext";
 import { useSocket } from "./contexts/SocketContext";
 import { ToastNotification } from './components/conversations/ToastNotification';
+import { usePageTitle } from './hooks/usePageTitle';
 
 import { AppSidebar } from './components/app-sidebar.jsx';
 import MobileBottomNav from './components/mobile-bottom-nav.jsx';
@@ -32,6 +33,9 @@ const AppContent = () => {
   const [isMobile, setIsMobile] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(false);
   const location = useLocation();
+  
+  // Usar o hook para atualizar o título da página
+  usePageTitle();
   
   // Verificar se está em uma rota de autenticação
   const isAuthRoute = location.pathname.includes('/login') || 

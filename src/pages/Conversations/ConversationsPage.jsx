@@ -57,22 +57,23 @@ const ConversationsPage = () => {
     clearUnreadMessages,
     isLoading,
     typingUsers,
-    sendTypingIndicator
+    sendTypingIndicator,
+    getTotalUnreadCount
   } = useSocket();
 
-  const { notificationsEnabled, toggleNotifications } = useMessageEffect();
+  const { notificationsEnabled, toggleNotifications, updateUnreadCount } = useMessageEffect();
   const { width } = useWindowSize();
   const isMobile = width < 768;
   const isUpdatingRef = useRef(false);
   
-  // Estado para filtros (adicionado do admin)
+  // Estado para filtros
   const [filters, setFilters] = useState({
     arquivada: false,
     sectorFilter: 'all',
     searchTerm: ''
   });
   
-  const [activeTab, setActiveTab] = useState('all');
+  const [activeTab, setActiveTab] = useState('em_andamento');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadingError, setLoadingError] = useState(null);
   const [mobileView, setMobileView] = useState('list');
@@ -88,13 +89,19 @@ const ConversationsPage = () => {
     setFilters(prev => ({ ...prev, [name]: value }));
   }, []);
   
+  // Atualizar o título da aba com o contador de mensagens não lidas
+  useEffect(() => {
+    const unreadCount = getTotalUnreadCount ? getTotalUnreadCount() : 0;
+    updateUnreadCount(unreadCount);
+  }, [conversations, getTotalUnreadCount, updateUnreadCount]);
+  
   useEffect(() => {
     if (hasUnreadMessages) {
       clearUnreadMessages();
     }
   }, [hasUnreadMessages, clearUnreadMessages]);
   
-  // Efeito para carregar conversas com filtros
+  // Efeito para carregar TODAS as conversas ativas (aguardando + em_andamento)
   useEffect(() => {
     const loadConversations = async () => {
       if (isUpdatingRef.current) return;
@@ -104,15 +111,9 @@ const ConversationsPage = () => {
       isUpdatingRef.current = true;
       
       try {
-        // Aplicar filtros na chamada de API
+        // SEMPRE carregar TODAS as conversas ativas (aguardando + em_andamento)
         const apiFilters = {
-          status: activeTab === 'finalizada' 
-            ? 'finalizada' 
-            : activeTab === 'aguardando'
-              ? 'aguardando'
-              : activeTab === 'em_andamento'
-                ? 'em_andamento'
-                : undefined,
+          status: [STATUS.AGUARDANDO, STATUS.EM_ANDAMENTO], // Sempre buscar ambos os status
           search: filters.searchTerm || undefined,
           setor: filters.sectorFilter !== 'all' ? filters.sectorFilter : undefined,
           arquivada: filters.arquivada
@@ -131,11 +132,11 @@ const ConversationsPage = () => {
     };
     
     loadConversations();
-  }, [refreshConversations, activeTab, filters.sectorFilter, filters.searchTerm]); // Dependências adicionadas
+  }, [refreshConversations, filters.sectorFilter, filters.searchTerm]); // Removido activeTab das dependências
   
   useEffect(() => {
     const loadCompletedConversations = async () => {
-      if (activeTab === 'completed' && (!completedConversations || completedConversations.length === 0) && !isUpdatingRef.current) {
+      if (activeTab === 'finalizada' && (!completedConversations || completedConversations.length === 0) && !isUpdatingRef.current) {
         setIsRefreshing(true);
         isUpdatingRef.current = true;
         
@@ -166,21 +167,15 @@ const ConversationsPage = () => {
     isUpdatingRef.current = true;
     
     try {
-      // Incluir filtros na atualização
+      // Sempre atualizar TODAS as conversas ativas
       const apiFilters = {
-        status: activeTab === 'finalizada' 
-          ? 'finalizada' 
-          : activeTab === 'aguardando'
-            ? 'aguardando'
-            : activeTab === 'em_andamento'
-              ? 'em_andamento'
-              : undefined,
+        status: [STATUS.AGUARDANDO, STATUS.EM_ANDAMENTO],
         search: filters.searchTerm || undefined,
         setor: filters.sectorFilter !== 'all' ? filters.sectorFilter : undefined,
         arquivada: filters.arquivada
       };
       
-      if (activeTab === 'completed') {
+      if (activeTab === 'finalizada') {
         await refreshCompletedConversations(apiFilters);
       } else {
         await refreshConversations(apiFilters);
@@ -263,13 +258,7 @@ const ConversationsPage = () => {
         
         // Atualizar com filtros
         const apiFilters = {
-          status: activeTab === 'finalizada' 
-            ? 'finalizada' 
-            : activeTab === 'aguardando'
-              ? 'aguardando'
-              : activeTab === 'em_andamento'
-                ? 'em_andamento'
-                : undefined,
+          status: [STATUS.AGUARDANDO, STATUS.EM_ANDAMENTO],
           search: filters.searchTerm || undefined,
           setor: filters.sectorFilter !== 'all' ? filters.sectorFilter : undefined,
           arquivada: filters.arquivada
@@ -285,7 +274,7 @@ const ConversationsPage = () => {
     } finally {
       setIsProcessing(false);
     }
-  }, [selectedConversation, selectedSector, isProcessing, transferConversation, refreshConversations, activeTab, filters]);
+  }, [selectedConversation, selectedSector, isProcessing, transferConversation, refreshConversations, filters]);
   
   const handleConfirmFinish = useCallback(async () => {
     if (!selectedConversation || isProcessing) return;
@@ -300,6 +289,7 @@ const ConversationsPage = () => {
         
         // Atualizar com filtros
         const apiFilters = {
+          status: [STATUS.AGUARDANDO, STATUS.EM_ANDAMENTO],
           search: filters.searchTerm || undefined,
           setor: filters.sectorFilter !== 'all' ? filters.sectorFilter : undefined,
           arquivada: filters.arquivada
@@ -331,6 +321,7 @@ const ConversationsPage = () => {
         
         // Atualizar com filtros
         const apiFilters = {
+          status: [STATUS.AGUARDANDO, STATUS.EM_ANDAMENTO],
           search: filters.searchTerm || undefined,
           setor: filters.sectorFilter !== 'all' ? filters.sectorFilter : undefined,
           arquivada: filters.arquivada
@@ -357,28 +348,6 @@ const ConversationsPage = () => {
       'info'
     );
   }, [notificationsEnabled, toggleNotifications]);
-  
-  const getActiveConversations = useCallback(() => {
-    if (activeTab === 'finalizada') {
-      return completedConversations || [];
-    }
-    
-    if (!conversations) return [];
-    
-    if (activeTab === 'aguardando') {
-      return conversations.filter(c => 
-        c.status && c.status.toLowerCase() === STATUS.AGUARDANDO
-      );
-    }
-    
-    if (activeTab === 'em_andamento') {
-      return conversations.filter(c => 
-        c.status && c.status.toLowerCase() === STATUS.EM_ANDAMENTO
-      );
-    }
-    
-    return conversations;
-  }, [activeTab, conversations, completedConversations]);
   
   const transferDialogContent = useCallback(() => (
     <RadioGroup value={selectedSector} onValueChange={setSelectedSector}>
@@ -407,6 +376,9 @@ const ConversationsPage = () => {
     </RadioGroup>
   ), [sectors, selectedSector]);
 
+  // Combinar todas as conversas para passar ao ConversationsList
+  const allConversations = activeTab === 'finalizada' ? completedConversations : conversations;
+
   return (
     <div className="h-full w-full flex flex-col bg-[#070b11] relative">
       <div className="absolute inset-0 pointer-events-none opacity-5">
@@ -420,7 +392,8 @@ const ConversationsPage = () => {
             isMobile && mobileView === 'detail' ? "hidden" : "flex-1"
           )}>
             <ConversationsList 
-              conversations={getActiveConversations()}
+              conversations={allConversations || []}
+              allConversations={conversations || []} // Passar TODAS as conversas ativas para calcular badges
               onSelectConversation={handleSelectConversation}
               isLoading={isLoading || isRefreshing}
               error={loadingError}

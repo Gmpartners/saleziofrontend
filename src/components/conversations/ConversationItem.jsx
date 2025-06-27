@@ -54,6 +54,8 @@ const formatTimestamp = (timestamp) => {
   
   try {
     const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return '';
+    
     const now = new Date();
     const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
@@ -69,79 +71,137 @@ const formatTimestamp = (timestamp) => {
       return date.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
     }
   } catch (error) {
+    console.error('Erro ao formatar timestamp:', error);
     return '';
   }
 };
 
 const getInitials = (name) => {
-  if (!name) return '';
+  if (!name || typeof name !== 'string') return 'U';
   
-  return name
-    .split(' ')
-    .slice(0, 2)
-    .map(n => n && n[0])
-    .filter(Boolean)
-    .join('')
-    .toUpperCase();
+  try {
+    return name
+      .split(' ')
+      .slice(0, 2)
+      .map(n => n && n[0])
+      .filter(Boolean)
+      .join('')
+      .toUpperCase();
+  } catch (error) {
+    return 'U';
+  }
 };
 
 const getSetorColor = (setorName) => {
-  if (!setorName) return null;
+  if (!setorName || typeof setorName !== 'string') return null;
   
-  const hash = setorName.split('').reduce((acc, char) => {
-    return char.charCodeAt(0) + ((acc << 5) - acc);
-  }, 0);
+  try {
+    const hash = setorName.split('').reduce((acc, char) => {
+      return char.charCodeAt(0) + ((acc << 5) - acc);
+    }, 0);
+    
+    const colorIndex = Math.abs(hash) % COLOR_PALETTE.length;
+    const { hue, name } = COLOR_PALETTE[colorIndex];
+    
+    const saturation = 75;
+    const lightness = 55;
+    const lightSaturation = 85;
+    const lightLightness = 88;
+    
+    return {
+      hue,
+      name,
+      color: `hsl(${hue}, ${saturation}%, ${lightness}%)`,
+      lightColor: `hsl(${hue}, ${lightSaturation}%, ${lightLightness}%)`,
+      textColor: `hsl(${hue}, ${saturation}%, ${lightness}%)`,
+      borderColor: `hsl(${hue}, ${saturation}%, ${lightness}%)`,
+      bgClass: `bg-${name}-500`,
+      textClass: `text-${name}-500`,
+      classes: {
+        badge: `bg-${name}-500/10 text-${name}-500 border-${name}-500/25`,
+        icon: `text-${name}-500`,
+        indicator: `bg-${name}-500`
+      }
+    };
+  } catch (error) {
+    return null;
+  }
+};
+
+const getLastMessagePreview = (conversation) => {
+  if (!conversation || typeof conversation !== 'object') {
+    return '';
+  }
   
-  const colorIndex = Math.abs(hash) % COLOR_PALETTE.length;
-  const { hue, name } = COLOR_PALETTE[colorIndex];
+  if (conversation.ultimaMensagem && 
+      typeof conversation.ultimaMensagem === 'string' && 
+      conversation.ultimaMensagem.trim()) {
+    return conversation.ultimaMensagem.trim();
+  }
   
-  const saturation = 75;
-  const lightness = 55;
-  const lightSaturation = 85;
-  const lightLightness = 88;
-  
-  return {
-    hue,
-    name,
-    color: `hsl(${hue}, ${saturation}%, ${lightness}%)`,
-    lightColor: `hsl(${hue}, ${lightSaturation}%, ${lightLightness}%)`,
-    textColor: `hsl(${hue}, ${saturation}%, ${lightness}%)`,
-    borderColor: `hsl(${hue}, ${saturation}%, ${lightness}%)`,
-    bgClass: `bg-${name}-500`,
-    textClass: `text-${name}-500`,
-    classes: {
-      badge: `bg-${name}-500/10 text-${name}-500 border-${name}-500/25`,
-      icon: `text-${name}-500`,
-      indicator: `bg-${name}-500`
+  if (conversation.mensagens && 
+      Array.isArray(conversation.mensagens) && 
+      conversation.mensagens.length > 0) {
+    
+    for (let i = conversation.mensagens.length - 1; i >= 0; i--) {
+      const message = conversation.mensagens[i];
+      
+      if (message && 
+          typeof message === 'object' && 
+          message.conteudo && 
+          typeof message.conteudo === 'string' && 
+          message.conteudo.trim()) {
+        return message.conteudo.trim();
+      }
     }
-  };
+  }
+  
+  return '';
 };
 
 const ConversationItem = ({ conversation, isSelected, onClick, empresasComSetores = [] }) => {
   const { width } = useWindowSize();
   const isMobile = width < 768;
   
-  if (!conversation) return null;
+  if (!conversation || typeof conversation !== 'object') {
+    return null;
+  }
   
   const {
-    nomeCliente,
-    ultimaMensagem,
+    nomeCliente = 'Cliente',
     ultimaAtividade,
     status,
     unreadCount = 0,
-    hasNewMessage
+    hasNewMessage = false
   } = conversation;
   
-  const initials = getInitials(nomeCliente || 'Cliente');
+  const initials = getInitials(nomeCliente);
   const timestamp = formatTimestamp(ultimaAtividade);
   const statusLower = status?.toLowerCase() || '';
   const statusStyle = STATUS_STYLES[statusLower] || STATUS_STYLES[STATUS.ARQUIVADA];
   const statusLabel = STATUS_LABELS[statusLower] || "Desconhecido";
   
-  const empresaSetorInfo = getEmpresaSetorInfo(conversation, empresasComSetores);
+  let empresaSetorInfo = { setor: 'Não definido', empresa: '', empresaAbreviada: '' };
+  let setorColor = null;
+  let empresaColor = null;
+  
+  try {
+    if (typeof getEmpresaSetorInfo === 'function') {
+      empresaSetorInfo = getEmpresaSetorInfo(conversation, empresasComSetores) || empresaSetorInfo;
+    }
+    
+    if (typeof getEmpresaColor === 'function' && empresaSetorInfo.empresa) {
+      empresaColor = getEmpresaColor(empresaSetorInfo.empresa);
+    }
+    
+    if (empresaSetorInfo.setor) {
+      setorColor = getSetorColor(empresaSetorInfo.setor);
+    }
+  } catch (error) {
+    console.error('Erro ao processar dados da empresa/setor:', error);
+  }
+  
   const { setor: setorName, empresa: empresaNome, empresaAbreviada } = empresaSetorInfo;
-  const setorColor = getSetorColor(setorName);
-  const empresaColor = getEmpresaColor(empresaNome);
   
   return (
     <div
@@ -164,10 +224,10 @@ const ConversationItem = ({ conversation, isSelected, onClick, empresasComSetore
           </AvatarFallback>
         </Avatar>
         
-        {setorName && (
+        {setorName && setorColor && (
           <div 
             className="absolute -left-1 top-1/2 transform -translate-y-1/2 w-1.5 h-1.5 rounded-full"
-            style={{ backgroundColor: setorColor?.color }}
+            style={{ backgroundColor: setorColor.color }}
             title={`Setor: ${setorName}`}
           />
         )}
@@ -181,7 +241,7 @@ const ConversationItem = ({ conversation, isSelected, onClick, empresasComSetore
               isSelected ? "text-white" : "text-slate-200",
               hasNewMessage && "font-semibold"
             )}>
-              {nomeCliente || 'Cliente'}
+              {nomeCliente}
             </h3>
             
             {!isMobile && empresaNome && empresaColor && (
@@ -207,25 +267,14 @@ const ConversationItem = ({ conversation, isSelected, onClick, empresasComSetore
               {timestamp}
             </span>
             
-            {unreadCount > 0 && (
-              <span 
-                className="flex items-center justify-center h-5 min-w-5 rounded-full bg-[#10b981] text-white text-xs font-bold px-1.5 mt-0.5 shadow-sm"
-              >
-                {unreadCount > 99 ? '99+' : unreadCount}
-              </span>
+            {(hasNewMessage || unreadCount > 0) && (
+              <span className="flex h-3 w-3 md:h-3.5 md:w-3.5 rounded-full bg-[#10b981] mt-1.5 animate-pulse" />
             )}
           </div>
         </div>
         
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-1 max-w-[65%]">
-            <p className={cn(
-              "text-xs md:text-sm truncate",
-              isSelected ? "text-slate-300" : "text-slate-400",
-              hasNewMessage && "text-white font-medium"
-            )}>
-              {ultimaMensagem || 'Nenhuma mensagem'}
-            </p>
           </div>
           
           <div className="flex items-center gap-1 flex-wrap justify-end">
@@ -249,9 +298,9 @@ const ConversationItem = ({ conversation, isSelected, onClick, empresasComSetore
               variant="outline"
               className="text-[10px] py-0 h-5 px-1 truncate"
               style={{ 
-                backgroundColor: setorName === 'Não delegado' ? '#ff980020' : `${setorColor?.color}20`, 
-                color: setorName === 'Não delegado' ? '#ff9800' : setorColor?.color,
-                borderColor: setorName === 'Não delegado' ? '#ff980035' : `${setorColor?.color}35`
+                backgroundColor: setorName === 'Não delegado' ? '#ff980020' : setorColor?.color ? `${setorColor.color}20` : '#1f293750', 
+                color: setorName === 'Não delegado' ? '#ff9800' : setorColor?.color || '#94a3b8',
+                borderColor: setorName === 'Não delegado' ? '#ff980035' : setorColor?.color ? `${setorColor.color}35` : '#1f293750'
               }}
               title={`Setor: ${setorName}`}
             >

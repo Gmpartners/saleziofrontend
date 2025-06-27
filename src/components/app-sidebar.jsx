@@ -38,7 +38,6 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
     closeSidebar();
   };
 
-  // Itens de navegação para usuários regulares
   const regularUserItems = [
     { 
       id: 'conversations', 
@@ -47,11 +46,8 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
       path: '/conversations',
       active: location.pathname.includes('/conversations') && !location.pathname.includes('/admin/conversations')
     },
-
-
   ];
 
-  // Itens de navegação para administradores
   const adminItems = [
     {
       id: 'admin-conversations',
@@ -60,31 +56,8 @@ export const AppSidebar = ({ collapsed, setCollapsed, closeSidebar }) => {
       path: '/conversations',
       active: location.pathname.includes('/admin/conversations')
     },
-    {
-      id: 'admin-users',
-      icon: <Users className="w-5 h-5" />,
-      label: 'Gerenciar Usuários',
-      path: '/admin/users',
-      active: location.pathname === '/admin/users'
-    },
-    {
-      id: 'admin-orchestrator',
-      icon: <Layers className="w-5 h-5" />,
-      label: 'Fluxos e Setores',
-      path: '/admin/flow-orchestrator',
-      active: location.pathname === '/admin/flow-orchestrator'
-    },
-    {
-      id: 'admin-analytics',
-      icon: <BarChart3 className="w-5 h-5" />,
-      label: 'Analytics',
-      path: '/admin/analytics',
-      active: location.pathname === '/admin/analytics'
-    },
-
   ];
 
-  // Escolher quais itens mostrar com base no status de admin
   const menuItems = isAdmin ? adminItems : regularUserItems;
 
   const renderMenuItem = (item) => {

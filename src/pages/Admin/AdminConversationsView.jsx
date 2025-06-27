@@ -142,9 +142,7 @@ const TabWithUnreadCount = React.memo(({ value, label, count }) => (
   >
     {label}
     {count > 0 && (
-      <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#10b981] text-[10px] font-bold text-white">
-        {count > 9 ? '9+' : count}
-      </span>
+      <span className="absolute -top-1.5 -right-1.5 flex h-3 w-3 md:h-3.5 md:w-3.5 rounded-full bg-[#10b981] animate-pulse" />
     )}
   </TabsTrigger>
 ));

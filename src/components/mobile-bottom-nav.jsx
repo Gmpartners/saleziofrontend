@@ -18,7 +18,6 @@ const MobileBottomNav = () => {
   const location = useLocation();
   const { isAdmin, logout } = useAuthContext();
   
-  // Itens de navegação para usuários regulares
   const regularNavItems = [
     {
       id: 'conversations',
@@ -28,20 +27,6 @@ const MobileBottomNav = () => {
       active: location.pathname.includes('/conversations') && !location.pathname.includes('/admin')
     },
     {
-      id: 'analytics',
-      label: 'Análise',
-      icon: <BarChart3 className="h-5 w-5" />,
-      path: '/analytics',
-      active: location.pathname === '/analytics'
-    },
-    {
-      id: 'profile',
-      label: 'Perfil',
-      icon: <User className="h-5 w-5" />,
-      path: '/profile',
-      active: location.pathname === '/profile'
-    },
-    {
       id: 'logout',
       label: 'Sair',
       icon: <LogOut className="h-5 w-5" />,
@@ -50,7 +35,6 @@ const MobileBottomNav = () => {
     }
   ];
 
-  // Itens de navegação para administradores
   const adminNavItems = [
     {
       id: 'admin-conversations',
@@ -60,20 +44,6 @@ const MobileBottomNav = () => {
       active: location.pathname.includes('/admin/conversations')
     },
     {
-      id: 'admin-users',
-      label: 'Usuários',
-      icon: <Users className="h-5 w-5" />,
-      path: '/admin/users',
-      active: location.pathname === '/admin/users'
-    },
-    {
-      id: 'admin-flow',
-      label: 'Fluxos',
-      icon: <Layers className="h-5 w-5" />,
-      path: '/admin/flow-orchestrator',
-      active: location.pathname === '/admin/flow-orchestrator'
-    },
-    {
       id: 'logout',
       label: 'Sair',
       icon: <LogOut className="h-5 w-5" />,
@@ -82,10 +52,8 @@ const MobileBottomNav = () => {
     }
   ];
 
-  // Escolher quais itens mostrar com base no status de admin
   const navItems = isAdmin ? adminNavItems : regularNavItems;
 
-  // Handler para navegação e ações
   const handleNavItem = (item) => {
     if (item.path) {
       navigate(item.path);

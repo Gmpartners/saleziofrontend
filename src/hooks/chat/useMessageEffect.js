@@ -8,6 +8,8 @@ export const useMessageEffect = () => {
   const [volume, setVolume] = useLocalStorage('notification_volume', '0.5');
   
   const [notificationPermission, setNotificationPermission] = useState('default');
+  const [originalTitle] = useState(document.title);
+  const [unreadCount, setUnreadCount] = useState(0);
   
   useEffect(() => {
     const checkPermission = async () => {
@@ -49,6 +51,19 @@ export const useMessageEffect = () => {
     }
   }, [soundEnabled, desktopNotificationsEnabled, volume]);
   
+  // Atualiza o título da aba quando há mensagens não lidas
+  useEffect(() => {
+    if (unreadCount > 0) {
+      document.title = `(${unreadCount}) Nova mensagem - ${originalTitle}`;
+    } else {
+      document.title = originalTitle;
+    }
+    
+    return () => {
+      document.title = originalTitle;
+    };
+  }, [unreadCount, originalTitle]);
+  
   const toggleSound = () => {
     const newValue = soundEnabled === 'true' ? 'false' : 'true';
     setSoundEnabled(newValue);
@@ -83,6 +98,10 @@ export const useMessageEffect = () => {
     notificationService.updateVolume(newVolume);
   };
   
+  const updateUnreadCount = (count) => {
+    setUnreadCount(count);
+  };
+  
   return {
     soundEnabled: soundEnabled === 'true',
     desktopNotificationsEnabled: desktopNotificationsEnabled === 'true',
@@ -90,6 +109,7 @@ export const useMessageEffect = () => {
     notificationPermission,
     toggleSound,
     toggleDesktopNotifications,
-    updateVolume
+    updateVolume,
+    updateUnreadCount
   };
 };
